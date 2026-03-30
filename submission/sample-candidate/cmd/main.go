@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"config-service/internal/handler"
@@ -12,9 +14,14 @@ import (
 )
 
 func main() {
-	port := os.Getenv("APP_PORT")
-	if port == "" {
-		port = "8080"
+	portStr := os.Getenv("APP_PORT")
+	if portStr == "" {
+		portStr = "8080"
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		log.Fatalf("invalid APP_PORT %q: must be an integer between 1 and 65535", portStr)
 	}
 
 	repo := repository.NewInMemory()
@@ -25,14 +32,14 @@ func main() {
 	h.RegisterRoutes(mux)
 
 	srv := &http.Server{
-		Addr:         ":" + port,
+		Addr:         fmt.Sprintf(":%d", port),
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	log.Printf("starting config-service on :%s", port)
+	log.Printf("starting config-service on :%d", port)
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
