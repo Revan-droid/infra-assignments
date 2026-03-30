@@ -21,7 +21,7 @@ func main() {
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1 || port > 65535 {
-		log.Fatalf("invalid APP_PORT %q: must be an integer between 1 and 65535", portStr)
+		log.Fatal("APP_PORT must be an integer between 1 and 65535")
 	}
 
 	repo := repository.NewInMemory()
