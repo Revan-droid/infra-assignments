@@ -1,0 +1,200 @@
+name: infra-pr-checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+
+  # ── Detect which candidate folder changed in this PR ─────────────────────
+  detect-candidate:
+    name: detect-candidate
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_dir: ${{ steps.detect.outputs.candidate_dir }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect candidate folder
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE=${{ github.event.pull_request.base.sha }}
+          else
+            BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+          fi
+
+          CANDIDATE_DIR=$(git diff --name-only "$BASE"...HEAD \
+            | grep '^submission/' \
+            | awk -F'/' '{print $1"/"$2}' \
+            | sort -u \
+            | head -1)
+
+          if [ -z "$CANDIDATE_DIR" ]; then
+            echo "No candidate folder detected in changed files."
+            exit 1
+          fi
+
+          echo "Detected candidate folder: $CANDIDATE_DIR"
+          echo "candidate_dir=$CANDIDATE_DIR" >> "$GITHUB_OUTPUT"
+
+  # ── 1. Lint Go ────────────────────────────────────────────────────────────
+  lint-go:
+    name: lint-go
+    needs: detect-candidate
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_DIR: ${{ needs.detect-candidate.outputs.candidate_dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Check gofmt
+        run: |
+          test -z "$(gofmt -l "$CANDIDATE_DIR")" \
+            || (echo "Run gofmt on the files above" && gofmt -l "$CANDIDATE_DIR" && exit 1)
+
+      - name: Go vet
+        run: cd "$CANDIDATE_DIR" && go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59
+          working-directory: ${{ needs.detect-candidate.outputs.candidate_dir }}
+
+  # ── 2. Test Go ────────────────────────────────────────────────────────────
+  test-go:
+    name: test-go
+    needs: detect-candidate
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_DIR: ${{ needs.detect-candidate.outputs.candidate_dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Run tests
+        run: cd "$CANDIDATE_DIR" && go test ./... -count=1 -race
+
+  # ── 3. Validate Terraform ─────────────────────────────────────────────────
+  validate-terraform:
+    name: validate-terraform
+    needs: detect-candidate
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_DIR: ${{ needs.detect-candidate.outputs.candidate_dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      - name: Terraform fmt
+        run: |
+          cd "$CANDIDATE_DIR/infra/terraform"
+          terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: |
+          cd "$CANDIDATE_DIR/infra/terraform"
+          terraform init -backend=false
+
+      - name: Terraform validate
+        run: |
+          cd "$CANDIDATE_DIR/infra/terraform"
+          terraform validate
+
+  # ── 4. Lint YAML / Kubernetes manifests ───────────────────────────────────
+  lint-yaml-k8s:
+    name: lint-yaml-k8s
+    needs: detect-candidate
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_DIR: ${{ needs.detect-candidate.outputs.candidate_dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz
+          sudo mv kubeconform /usr/local/bin/kubeconform
+
+      - name: YAML lint
+        run: yamllint "$CANDIDATE_DIR/"
+
+      - name: Validate Kubernetes manifests
+        run: |
+          if [ -d "$CANDIDATE_DIR/k8s" ]; then
+            find "$CANDIDATE_DIR/k8s" -name "*.yaml" -o -name "*.yml" \
+              | xargs -r kubeconform -strict -summary
+          else
+            echo "No k8s directory found, skipping manifest validation"
+          fi
+
+  # ── 5. Build container image ──────────────────────────────────────────────
+  build-image:
+    name: build-image
+    needs: detect-candidate
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_DIR: ${{ needs.detect-candidate.outputs.candidate_dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build container image
+        run: docker build -t config-service:pr "$CANDIDATE_DIR"
+
+  # ── 6. Security scan ──────────────────────────────────────────────────────
+  security-scan:
+    name: security-scan
+    needs: detect-candidate
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_DIR: ${{ needs.detect-candidate.outputs.candidate_dir }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Run gosec
+        run: cd "$CANDIDATE_DIR" && gosec ./...
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ needs.detect-candidate.outputs.candidate_dir }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
