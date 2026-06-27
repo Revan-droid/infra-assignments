@@ -377,6 +377,21 @@ helm upgrade config-service deployments/helm/config-service \
   --wait --timeout=2m
 green "ServiceMonitor enabled — Prometheus will now scrape config-service"
 
+# ─── Load Grafana dashboard ───────────────────────────────────────────────────
+# kube-prometheus-stack's Grafana sidecar watches for ConfigMaps labelled
+# grafana_dashboard=1 and auto-imports them — same dashboard as docker-compose.
+yellow "Loading Grafana dashboard (Config Service — Full Observability)..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DASHBOARD_JSON="${SCRIPT_DIR}/../deployments/manifests/grafana-dashboard.json"
+kubectl create configmap config-service-grafana-dashboard \
+  --namespace "${NAMESPACE}" \
+  --from-file=config-service-dashboard.json="${DASHBOARD_JSON}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl label configmap config-service-grafana-dashboard \
+  --namespace "${NAMESPACE}" \
+  grafana_dashboard=1 --overwrite
+green "Dashboard imported — open Grafana → Dashboards → 'Config Service — Full Observability'"
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 header "All pods"
 kubectl -n "${NAMESPACE}" get pods -o wide
