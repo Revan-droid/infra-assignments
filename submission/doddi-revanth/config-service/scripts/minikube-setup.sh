@@ -138,6 +138,11 @@ else
 fi
 kubectl config use-context "${PROFILE}"
 
+# Enable metrics-server for HPA (CPU/memory autoscaling)
+yellow "Enabling metrics-server addon..."
+minikube addons enable metrics-server --profile "${PROFILE}" 2>/dev/null || true
+green "metrics-server enabled"
+
 # ─── Step 2: Build app image on HOST docker then load into Minikube ──────────
 # vendor/ must exist before docker build (-mod=vendor Dockerfile).
 # create_vendor_dir uses golang:1.22 (Debian) with macOS CA injection.
@@ -254,6 +259,7 @@ docker pull --platform linux/amd64 grafana/loki:3.0.0
 helm upgrade --install loki grafana/loki \
   --version "${LOKI_CHART_VERSION}" \
   --namespace "${NAMESPACE}" \
+  --set deploymentMode=SingleBinary \
   --set loki.auth_enabled=false \
   --set loki.commonConfig.replication_factor=1 \
   --set loki.storage.type=filesystem \
@@ -301,6 +307,7 @@ helm upgrade --install jaeger jaeger/jaeger \
   --set query.enabled=false \
   --set agent.enabled=false \
   --set storage.type=memory \
+  --set cassandra.enabled=false \
   --wait --timeout=3m
 green "Jaeger ready  → http://localhost:16686 after port-forward"
 

@@ -301,6 +301,7 @@ header "Step 8: Loki  (chart ${LOKI_CHART_VERSION})"
 helm upgrade --install loki grafana/loki \
   --version "${LOKI_CHART_VERSION}" \
   --namespace "${NAMESPACE}" \
+  --set deploymentMode=SingleBinary \
   --set loki.auth_enabled=false \
   --set loki.commonConfig.replication_factor=1 \
   --set loki.storage.type=filesystem \
@@ -344,6 +345,7 @@ helm upgrade --install jaeger jaeger/jaeger \
   --set query.enabled=false \
   --set agent.enabled=false \
   --set storage.type=memory \
+  --set cassandra.enabled=false \
   --wait --timeout=3m
 green "Jaeger ready  → http://localhost:16686 after port-forward"
 
