@@ -233,8 +233,59 @@ helm install kafka bitnami/kafka \
   --wait --timeout=5m
 green "Kafka ready"
 
-# ─── Step 8: Jaeger ──────────────────────────────────────────────────────────
-header "Step 8: Jaeger  (chart ${JAEGER_CHART_VERSION})"
+# ─── Step 8: config-service ──────────────────────────────────────────────────
+header "Step 8: config-service app"
+helm upgrade --install config-service deployments/helm/config-service \
+  --namespace "${NAMESPACE}" \
+  --set image.repository=config-service \
+  --set image.tag="${IMAGE_TAG}" \
+  --set image.pullPolicy=Never \
+  --set config.enableKafka=true \
+  --set config.logLevel=debug \
+  --set "config.otlpEndpoint=otel-collector-opentelemetry-collector.${NAMESPACE}.svc.cluster.local:4317" \
+  --set serviceMonitor.enabled=true \
+  --wait --timeout=3m
+green "config-service deployed"
+
+# ─── Step 9: Loki ────────────────────────────────────────────────────────────
+header "Step 9: Loki  (chart ${LOKI_CHART_VERSION})"
+docker pull --platform linux/amd64 grafana/loki:3.0.0
+
+helm upgrade --install loki grafana/loki \
+  --version "${LOKI_CHART_VERSION}" \
+  --namespace "${NAMESPACE}" \
+  --set loki.auth_enabled=false \
+  --set loki.commonConfig.replication_factor=1 \
+  --set loki.storage.type=filesystem \
+  --set loki.useTestSchema=true \
+  --set singleBinary.replicas=1 \
+  --set singleBinary.image.registry=docker.io \
+  --set singleBinary.image.repository=grafana/loki \
+  --set singleBinary.image.tag=3.0.0 \
+  --set singleBinary.image.pullPolicy=IfNotPresent \
+  --set "read.replicas=0" \
+  --set "write.replicas=0" \
+  --set "backend.replicas=0" \
+  --wait --timeout=3m
+green "Loki ready"
+
+# ─── Step 10: Promtail ───────────────────────────────────────────────────────
+header "Step 10: Promtail  (chart ${PROMTAIL_CHART_VERSION})"
+docker pull --platform linux/amd64 grafana/promtail:2.9.3
+
+helm upgrade --install promtail grafana/promtail \
+  --version "${PROMTAIL_CHART_VERSION}" \
+  --namespace "${NAMESPACE}" \
+  --set image.registry=docker.io \
+  --set image.repository=grafana/promtail \
+  --set image.tag=2.9.3 \
+  --set image.pullPolicy=IfNotPresent \
+  --set "config.clients[0].url=http://loki.${NAMESPACE}.svc.cluster.local:3100/loki/api/v1/push" \
+  --wait --timeout=3m
+green "Promtail ready"
+
+# ─── Step 11: Jaeger ─────────────────────────────────────────────────────────
+header "Step 11: Jaeger  (chart ${JAEGER_CHART_VERSION})"
 docker pull --platform linux/amd64 jaegertracing/all-in-one:1.53.0
 
 helm upgrade --install jaeger jaeger/jaeger \
@@ -249,18 +300,18 @@ helm upgrade --install jaeger jaeger/jaeger \
   --set agent.enabled=false \
   --set storage.type=memory \
   --wait --timeout=3m
-green "Jaeger ready"
+green "Jaeger ready  → http://localhost:16686 after port-forward"
 
-# ─── Step 9: OpenTelemetry Collector ─────────────────────────────────────────
-header "Step 9: OpenTelemetry Collector  (chart ${OTEL_CHART_VERSION})"
-docker pull --platform linux/amd64 otel/opentelemetry-collector-k8s:0.97.0
-
+# ─── Step 12: OpenTelemetry Collector ────────────────────────────────────────
+# Image lives at ghcr.io only (Docker Hub otel/opentelemetry-collector-k8s has
+# no stable tags). Minikube's Docker daemon pulls via macOS networking → ghcr.io works.
+header "Step 12: OpenTelemetry Collector  (chart ${OTEL_CHART_VERSION})"
 helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   --version "${OTEL_CHART_VERSION}" \
   --namespace "${NAMESPACE}" \
   --set mode=deployment \
-  --set image.repository=otel/opentelemetry-collector-k8s \
-  --set image.tag=0.97.0 \
+  --set "image.repository=ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s" \
+  --set image.tag=0.104.0 \
   --set image.pullPolicy=IfNotPresent \
   --set "config.receivers.otlp.protocols.grpc.endpoint=0.0.0.0:4317" \
   --set "config.receivers.otlp.protocols.http.endpoint=0.0.0.0:4318" \
@@ -271,60 +322,10 @@ helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   --wait --timeout=3m
 green "OTel Collector ready"
 
-# ─── Step 10: Loki ────────────────────────────────────────────────────────────
-header "Step 10: Loki  (chart ${LOKI_CHART_VERSION})"
-docker pull --platform linux/amd64 grafana/loki:3.0.0
-
-helm upgrade --install loki grafana/loki \
-  --version "${LOKI_CHART_VERSION}" \
-  --namespace "${NAMESPACE}" \
-  --set loki.auth_enabled=false \
-  --set loki.commonConfig.replication_factor=1 \
-  --set loki.storage.type=filesystem \
-  --set singleBinary.replicas=1 \
-  --set singleBinary.image.registry=docker.io \
-  --set singleBinary.image.repository=grafana/loki \
-  --set singleBinary.image.tag=3.0.0 \
-  --set singleBinary.image.pullPolicy=IfNotPresent \
-  --set "read.replicas=0" \
-  --set "write.replicas=0" \
-  --set "backend.replicas=0" \
-  --wait --timeout=3m
-green "Loki ready"
-
-# ─── Step 12: Promtail ────────────────────────────────────────────────────────
-header "Step 12: Promtail  (chart ${PROMTAIL_CHART_VERSION})"
-docker pull --platform linux/amd64 grafana/promtail:2.9.3
-
-helm upgrade --install promtail grafana/promtail \
-  --version "${PROMTAIL_CHART_VERSION}" \
-  --namespace "${NAMESPACE}" \
-  --set image.registry=docker.io \
-  --set image.repository=grafana/promtail \
-  --set image.tag=2.9.3 \
-  --set image.pullPolicy=IfNotPresent \
-  --set "config.clients[0].url=http://loki.${NAMESPACE}.svc.cluster.local:3100/loki/api/v1/push" \
-  --wait --timeout=3m
-green "Promtail ready"
-
-# ─── Step 13: config-service ──────────────────────────────────────────────────
-header "Step 13: config-service app"
-helm upgrade --install config-service deployments/helm/config-service \
-  --namespace "${NAMESPACE}" \
-  --set image.repository=config-service \
-  --set image.tag="${IMAGE_TAG}" \
-  --set image.pullPolicy=Never \
-  --set config.enableKafka=true \
-  --set config.logLevel=debug \
-  --set "config.otlpEndpoint=otel-collector-opentelemetry-collector.${NAMESPACE}.svc.cluster.local:4317" \
-  --set serviceMonitor.enabled=true \
-  --wait --timeout=3m
-green "config-service deployed"
-
-# ─── Step 14: Prometheus + Grafana ────────────────────────────────────────────
+# ─── Step 13: Prometheus + Grafana ───────────────────────────────────────────
 # Installed AFTER the app so ServiceMonitor resources exist before the operator
 # scrapes for them — avoids a reconcile delay on first deploy.
-header "Step 14: Prometheus + Grafana  (chart ${PROM_STACK_CHART_VERSION})"
+header "Step 13: Prometheus + Grafana  (chart ${PROM_STACK_CHART_VERSION})"
 
 # Pre-pull images that are reliably hosted on Docker Hub.
 # prometheus-operator images only exist at quay.io — let helm pull those
