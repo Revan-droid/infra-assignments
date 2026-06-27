@@ -1,0 +1,115 @@
+name: CD
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: submission/doddi-revanth/config-service
+
+env:
+  APP_NAME: config-service
+  RELEASE_NAME: config-service
+  NAMESPACE: config-service
+
+jobs:
+  validate:
+    name: Validate Helm chart
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.15.0'
+
+      - name: Helm lint
+        run: helm lint deployments/helm/config-service
+
+      - name: Helm template dry-run
+        run: |
+          helm template "$RELEASE_NAME" deployments/helm/config-service \
+            --namespace "$NAMESPACE" \
+            --set image.repository=ghcr.io/${{ github.repository_owner }}/config-service \
+            --set image.tag=${GITHUB_SHA} \
+            --set image.pullPolicy=IfNotPresent
+
+  docker-build-push:
+    name: Build and push image
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_repository: ${{ steps.image-meta.outputs.image_repository }}
+      image_tag: ${{ steps.image-meta.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image metadata
+        id: image-meta
+        run: |
+          owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          echo "image_repository=ghcr.io/${owner}/${APP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Repository secret required in GitHub: GHCR_TOKEN with permission to push packages.
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: submission/doddi-revanth/config-service
+          push: true
+          tags: ${{ steps.image-meta.outputs.image_repository }}:${{ steps.image-meta.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-dry-run:
+    name: Deploy dry-run
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    needs: [validate, docker-build-push]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.15.0'
+
+      - name: Helm upgrade --install dry-run
+        run: |
+          # In a real environment, this step would deploy to your cluster.
+          # For this assignment, we demonstrate the pipeline structure only.
+          # Actual cluster deployment is performed locally with scripts/kind-setup.sh or scripts/minikube-setup.sh.
+          helm upgrade --install "$RELEASE_NAME" deployments/helm/config-service \
+            --namespace "$NAMESPACE" \
+            --create-namespace \
+            --set image.repository=${{ needs.docker-build-push.outputs.image_repository }} \
+            --set image.tag=${{ needs.docker-build-push.outputs.image_tag }} \
+            --set image.pullPolicy=IfNotPresent \
+            --dry-run=client \
+            --debug
+
+      - name: Deployment notes
+        run: |
+          echo "This repository does not deploy to a hosted Kubernetes cluster from GitHub Actions."
+          echo "To make this a real CD pipeline, add a kubeconfig secret and run helm upgrade --install against that cluster."
+          echo "For this assignment, deploy locally with scripts/kind-setup.sh or scripts/minikube-setup.sh."

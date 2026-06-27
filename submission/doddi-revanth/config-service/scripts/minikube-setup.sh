@@ -48,6 +48,14 @@ header() {
   echo -e "\033[1;36m════════════════════════════════════════════════\033[0m"
 }
 
+enable_minikube_docker_env() {
+  eval "$(minikube docker-env --profile "${PROFILE}")"
+}
+
+disable_minikube_docker_env() {
+  eval "$(minikube docker-env --profile "${PROFILE}" --unset)"
+}
+
 helm_clean() {
   local release=$1
   if helm status "$release" --namespace "${NAMESPACE}" &>/dev/null; then
@@ -85,24 +93,29 @@ kubectl config use-context "${PROFILE}"
 #   Images built/pulled after this line are inside Minikube directly.
 #   Pods find them immediately with pullPolicy=IfNotPresent — no load step needed.
 header "Step 2: Switch Docker to Minikube daemon"
-eval "$(minikube docker-env --profile "${PROFILE}")"
+enable_minikube_docker_env
 green "Docker now talking to Minikube's daemon"
 
 # ─── Step 3: Vendor dependencies (for offline Docker build) ──────────────────
 header "Step 3: Go mod vendor"
 if [ ! -d "vendor" ]; then
   yellow "vendor/ not found — running go mod vendor inside Docker..."
-  # Reset to host Docker temporarily to run the golang container
-  eval "$(minikube docker-env --profile "${PROFILE}" --unset)"
-  docker run --rm \
+  # Reset to host Docker temporarily so the golang:1.22 Debian image can run go mod vendor.
+  disable_minikube_docker_env
+  if ! docker run --rm \
     -e GONOSUMDB='*' \
+    -e GOFLAGS='-mod=mod' \
     -e GOPROXY='direct' \
     -v "$(pwd)":/workspace \
     -w /workspace \
     golang:1.22 \
-    go mod vendor
-  # Switch back to Minikube daemon
-  eval "$(minikube docker-env --profile "${PROFILE}")"
+    go mod vendor; then
+    enable_minikube_docker_env
+    red "go mod vendor failed"
+    exit 1
+  fi
+  # Re-enable the Minikube Docker daemon for all remaining image pulls/builds.
+  enable_minikube_docker_env
   green "vendor/ created"
 else
   green "vendor/ found — skipping"
@@ -148,8 +161,8 @@ helm_clean postgres
 
 # Pull into Minikube's Docker first so Kubernetes doesn't hit the network
 yellow "Pulling PostgreSQL image into Minikube..."
-docker pull bitnami/postgresql:16.3.0 2>/dev/null || \
-docker pull bitnamilegacy/postgresql:16.3.0-debian-12-r10
+docker pull --platform linux/amd64 bitnami/postgresql:16.3.0 2>/dev/null || \
+docker pull --platform linux/amd64 bitnamilegacy/postgresql:16.3.0-debian-12-r10
 
 helm install postgres bitnami/postgresql \
   --version "${POSTGRES_CHART_VERSION}" \
@@ -172,7 +185,7 @@ header "Step 8: Kafka  (chart ${KAFKA_CHART_VERSION})"
 helm_clean kafka
 
 yellow "Pulling Kafka image into Minikube..."
-docker pull bitnamilegacy/kafka:3.7.1
+docker pull --platform linux/amd64 bitnamilegacy/kafka:3.7.1
 
 helm install kafka bitnami/kafka \
   --version "${KAFKA_CHART_VERSION}" \
@@ -198,10 +211,10 @@ green "Kafka ready"
 header "Step 9: Prometheus + Grafana  (chart ${PROM_STACK_CHART_VERSION})"
 
 yellow "Pulling Prometheus stack images into Minikube..."
-docker pull prom/prometheus:v2.53.0
-docker pull prometheusoperator/prometheus-operator:v0.74.0
-docker pull prometheusoperator/prometheus-config-reloader:v0.74.0
-docker pull grafana/grafana:10.4.3
+docker pull --platform linux/amd64 prom/prometheus:v2.53.0
+docker pull --platform linux/amd64 prometheusoperator/prometheus-operator:v0.74.0
+docker pull --platform linux/amd64 prometheusoperator/prometheus-config-reloader:v0.74.0
+docker pull --platform linux/amd64 grafana/grafana:10.4.3
 
 helm upgrade --install prometheus prometheus/kube-prometheus-stack \
   --version "${PROM_STACK_CHART_VERSION}" \
@@ -237,7 +250,7 @@ green "Prometheus + Grafana ready  (admin / admin)"
 
 # ─── Step 10: Jaeger ──────────────────────────────────────────────────────────
 header "Step 10: Jaeger  (chart ${JAEGER_CHART_VERSION})"
-docker pull jaegertracing/all-in-one:1.53.0
+docker pull --platform linux/amd64 jaegertracing/all-in-one:1.53.0
 
 helm upgrade --install jaeger jaeger/jaeger \
   --version "${JAEGER_CHART_VERSION}" \
@@ -255,7 +268,7 @@ green "Jaeger ready"
 
 # ─── Step 11: OpenTelemetry Collector ─────────────────────────────────────────
 header "Step 11: OpenTelemetry Collector  (chart ${OTEL_CHART_VERSION})"
-docker pull otel/opentelemetry-collector-k8s:0.97.0
+docker pull --platform linux/amd64 otel/opentelemetry-collector-k8s:0.97.0
 
 helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   --version "${OTEL_CHART_VERSION}" \
@@ -275,7 +288,7 @@ green "OTel Collector ready"
 
 # ─── Step 12: Loki ────────────────────────────────────────────────────────────
 header "Step 12: Loki  (chart ${LOKI_CHART_VERSION})"
-docker pull grafana/loki:3.0.0
+docker pull --platform linux/amd64 grafana/loki:3.0.0
 
 helm upgrade --install loki grafana/loki \
   --version "${LOKI_CHART_VERSION}" \
@@ -296,7 +309,7 @@ green "Loki ready"
 
 # ─── Step 13: Promtail ────────────────────────────────────────────────────────
 header "Step 13: Promtail  (chart ${PROMTAIL_CHART_VERSION})"
-docker pull grafana/promtail:2.9.3
+docker pull --platform linux/amd64 grafana/promtail:2.9.3
 
 helm upgrade --install promtail grafana/promtail \
   --version "${PROMTAIL_CHART_VERSION}" \
