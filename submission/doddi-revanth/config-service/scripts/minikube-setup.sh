@@ -307,7 +307,9 @@ helm upgrade --install jaeger jaeger/jaeger \
   --set query.enabled=false \
   --set agent.enabled=false \
   --set storage.type=memory \
-  --set cassandra.enabled=false \
+  --set provisionDataStore.cassandra=false \
+  --set provisionDataStore.elasticsearch=false \
+  --set provisionDataStore.kafka=false \
   --wait --timeout=3m
 green "Jaeger ready  → http://localhost:16686 after port-forward"
 

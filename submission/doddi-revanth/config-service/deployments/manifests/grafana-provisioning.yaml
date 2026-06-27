@@ -12,7 +12,7 @@ grafana:
     - name: Jaeger
       type: jaeger
       access: proxy
-      url: http://jaeger-allInOne.config-service.svc.cluster.local:16686
+      url: http://jaeger-query.config-service.svc.cluster.local:16686
 
 prometheus:
   prometheusSpec:
