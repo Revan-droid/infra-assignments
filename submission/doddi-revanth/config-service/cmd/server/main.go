@@ -111,7 +111,7 @@ func main() {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Logging(logger, metrics))
-	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(middleware.Timeout(14 * time.Second)) // must be < server WriteTimeout (15s)
 
 	r.Get("/ping", healthHandler.Ping)
 	r.Get("/live", healthHandler.Live)

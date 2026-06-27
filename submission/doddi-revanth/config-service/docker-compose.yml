@@ -78,7 +78,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server kafka:9092 --list"]
       interval: 15s
       timeout: 10s
       retries: 5

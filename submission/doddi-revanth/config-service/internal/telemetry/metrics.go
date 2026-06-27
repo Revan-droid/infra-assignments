@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // Metrics holds all Prometheus counters and histograms.
@@ -21,44 +20,55 @@ type Metrics struct {
 }
 
 // NewMetrics registers and returns all Prometheus metrics.
+// Uses prometheus.MustRegister with AlreadyRegisteredError handling so
+// tests can call NewMetrics() multiple times without panicking.
 func NewMetrics() *Metrics {
+	reg := func(c prometheus.Collector) prometheus.Collector {
+		if err := prometheus.DefaultRegisterer.Register(c); err != nil {
+			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+				return are.ExistingCollector
+			}
+			panic(err)
+		}
+		return c
+	}
 	return &Metrics{
-		httpRequestsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+		httpRequestsTotal: reg(prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "http_requests_total",
 			Help: "Total number of HTTP requests",
-		}, []string{"method", "path", "status"}),
+		}, []string{"method", "path", "status"})).(*prometheus.CounterVec),
 
-		requestDuration: promauto.NewHistogramVec(prometheus.HistogramOpts{
+		requestDuration: reg(prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "request_duration_seconds",
 			Help:    "HTTP request latency",
 			Buckets: prometheus.DefBuckets,
-		}, []string{"method", "path"}),
+		}, []string{"method", "path"})).(*prometheus.HistogramVec),
 
-		dbQueriesTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+		dbQueriesTotal: reg(prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "db_queries_total",
 			Help: "Total number of database queries",
-		}, []string{"operation"}),
+		}, []string{"operation"})).(*prometheus.CounterVec),
 
-		dbQueryDuration: promauto.NewHistogramVec(prometheus.HistogramOpts{
+		dbQueryDuration: reg(prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "db_query_duration_seconds",
 			Help:    "Database query latency",
 			Buckets: prometheus.DefBuckets,
-		}, []string{"operation"}),
+		}, []string{"operation"})).(*prometheus.HistogramVec),
 
-		kafkaMessagesTotal: promauto.NewCounter(prometheus.CounterOpts{
+		kafkaMessagesTotal: reg(prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "kafka_messages_total",
 			Help: "Total number of Kafka messages published",
-		}),
+		})).(prometheus.Counter),
 
-		configUpsertsTotal: promauto.NewCounter(prometheus.CounterOpts{
+		configUpsertsTotal: reg(prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "config_upserts_total",
 			Help: "Total number of config upsert operations",
-		}),
+		})).(prometheus.Counter),
 
-		configReadsTotal: promauto.NewCounter(prometheus.CounterOpts{
+		configReadsTotal: reg(prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "config_reads_total",
 			Help: "Total number of config read operations",
-		}),
+		})).(prometheus.Counter),
 	}
 }
 

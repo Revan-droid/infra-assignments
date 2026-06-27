@@ -3,14 +3,11 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /build
 
-# vendor/ is pre-created by the setup scripts (scripts/kind-setup.sh or
-# scripts/minikube-setup.sh) using a go mod vendor step that injects the macOS
-# system CA certificate bundle to handle corporate TLS proxies. This means the
-# Docker build never needs network access — pure compilation only.
+# vendor/ is pre-created by the setup scripts using go mod vendor with macOS CA
+# injection to handle corporate TLS proxies. Docker build has zero network access.
 COPY go.mod go.sum ./
 COPY vendor/ vendor/
 
-# Copy source and build a statically linked binary
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -mod=vendor \
@@ -20,15 +17,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/server
 
 # ─── Runtime Stage ─────────────────────────────────────────────────────────────
-FROM docker.io/alpine:3.19
-
-RUN apk --no-cache add ca-certificates tzdata && \
-    addgroup -S appgroup && adduser -S appuser -G appgroup
+# distroless/static has no package manager — zero network calls needed at build time.
+# Includes ca-certificates and tzdata. Runs as nonroot (uid 65532) by default.
+FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /config-service /config-service
 
 EXPOSE 8080
 
-USER appuser
+USER nonroot
 
 ENTRYPOINT ["/config-service"]
