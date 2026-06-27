@@ -327,7 +327,7 @@ helm upgrade --install promtail grafana/promtail \
   --set image.repository=grafana/promtail \
   --set image.tag=2.9.3 \
   --set image.pullPolicy=IfNotPresent \
-  --set "config.clients[0].url=http://loki.${NAMESPACE}.svc.cluster.local:3100/loki/api/v1/push" \
+  --set "config.clients[0].url=http://loki-gateway.${NAMESPACE}.svc.cluster.local/loki/api/v1/push" \
   --wait --timeout=3m
 green "Promtail ready"
 
