@@ -266,6 +266,8 @@ helm upgrade --install loki grafana/loki \
   --set "read.replicas=0" \
   --set "write.replicas=0" \
   --set "backend.replicas=0" \
+  --set chunksCache.enabled=false \
+  --set resultsCache.enabled=false \
   --wait --timeout=3m
 green "Loki ready"
 
