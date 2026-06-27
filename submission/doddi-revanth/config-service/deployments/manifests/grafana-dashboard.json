@@ -1,144 +1,109 @@
 {
-  "__inputs": [],
-  "__requires": [
-    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
-    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
-  ],
-  "annotations": { "list": [] },
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
-  "id": null,
+  "title": "Config Service — Full Observability",
+  "uid": "config-service-full",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "browser",
+  "tags": ["config-service", "go", "platform"],
   "panels": [
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "reqps" },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "id": 1,
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "rate(http_requests_total[2m])",
-          "legendFormat": "{{method}} {{path}} {{status}}"
-        }
-      ],
-      "title": "HTTP Request Rate",
-      "type": "timeseries"
+      "id": 1, "gridPos": {"x":0,"y":0,"w":4,"h":4},
+      "title": "Request Rate (req/s)",
+      "type": "stat",
+      "options": {"colorMode":"background","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"]}},
+      "fieldConfig": {"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"yellow","value":10},{"color":"red","value":50}]},"unit":"reqps"}},
+      "targets": [{"datasource":"Prometheus","expr":"sum(rate(http_requests_total[1m]))","legendFormat":"req/s"}]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "id": 2,
-      "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(request_duration_seconds_bucket[2m])) by (le, method, path))",
-          "legendFormat": "p95 {{method}} {{path}}"
-        },
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(request_duration_seconds_bucket[2m])) by (le, method, path))",
-          "legendFormat": "p99 {{method}} {{path}}"
-        }
-      ],
-      "title": "Request Latency (p95/p99)",
-      "type": "timeseries"
+      "id": 2, "gridPos": {"x":4,"y":0,"w":4,"h":4},
+      "title": "Error Rate (%)",
+      "type": "stat",
+      "options": {"colorMode":"background","reduceOptions":{"calcs":["lastNotNull"]}},
+      "fieldConfig": {"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"yellow","value":1},{"color":"red","value":5}]},"unit":"percent"}},
+      "targets": [{"datasource":"Prometheus","expr":"sum(rate(http_requests_total{status=~\"5..\"}[1m])) / sum(rate(http_requests_total[1m])) * 100","legendFormat":"error %"}]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
-      "id": 3,
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto" },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "increase(config_upserts_total[5m])",
-          "legendFormat": "Upserts (5m)"
-        }
-      ],
-      "title": "Config Upserts (5m window)",
-      "type": "stat"
+      "id": 3, "gridPos": {"x":8,"y":0,"w":4,"h":4},
+      "title": "P99 Latency",
+      "type": "stat",
+      "options": {"colorMode":"background","reduceOptions":{"calcs":["lastNotNull"]}},
+      "fieldConfig": {"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"yellow","value":0.5},{"color":"red","value":1}]},"unit":"s"}},
+      "targets": [{"datasource":"Prometheus","expr":"histogram_quantile(0.99, sum(rate(request_duration_seconds_bucket[5m])) by (le))","legendFormat":"p99"}]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
-      "id": 4,
-      "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "increase(config_reads_total[5m])",
-          "legendFormat": "Reads (5m)"
-        }
-      ],
-      "title": "Config Reads (5m window)",
-      "type": "stat"
+      "id": 4, "gridPos": {"x":12,"y":0,"w":4,"h":4},
+      "title": "Config Upserts",
+      "type": "stat",
+      "options": {"colorMode":"background","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"]}},
+      "fieldConfig": {"defaults":{"color":{"fixedColor":"blue","mode":"fixed"},"unit":"short"}},
+      "targets": [{"datasource":"Prometheus","expr":"increase(config_upserts_total[5m])","legendFormat":"upserts"}]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
-      "id": 5,
-      "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "increase(kafka_messages_total[5m])",
-          "legendFormat": "Kafka Events (5m)"
-        }
-      ],
-      "title": "Kafka Messages (5m window)",
-      "type": "stat"
+      "id": 5, "gridPos": {"x":16,"y":0,"w":4,"h":4},
+      "title": "Config Reads",
+      "type": "stat",
+      "options": {"colorMode":"background","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"]}},
+      "fieldConfig": {"defaults":{"color":{"fixedColor":"purple","mode":"fixed"},"unit":"short"}},
+      "targets": [{"datasource":"Prometheus","expr":"increase(config_reads_total[5m])","legendFormat":"reads"}]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "s" },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "id": 6,
-      "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket[2m])) by (le, operation))",
-          "legendFormat": "p95 {{operation}}"
-        }
-      ],
-      "title": "DB Query Latency p95",
-      "type": "timeseries"
+      "id": 6, "gridPos": {"x":20,"y":0,"w":4,"h":4},
+      "title": "Kafka Events",
+      "type": "stat",
+      "options": {"colorMode":"background","graphMode":"area","reduceOptions":{"calcs":["lastNotNull"]}},
+      "fieldConfig": {"defaults":{"color":{"fixedColor":"orange","mode":"fixed"},"unit":"short"}},
+      "targets": [{"datasource":"Prometheus","expr":"increase(kafka_messages_total[5m])","legendFormat":"events"}]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "id": 7,
+      "id": 7, "gridPos": {"x":0,"y":4,"w":12,"h":8},
+      "title": "HTTP Request Rate by Method & Status",
+      "type": "timeseries",
+      "options": {"tooltip":{"mode":"multi"}},
+      "fieldConfig": {"defaults":{"unit":"reqps","custom":{"lineWidth":2}}},
       "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "rate(db_queries_total[2m])",
-          "legendFormat": "{{operation}}"
-        }
-      ],
-      "title": "DB Query Rate",
-      "type": "timeseries"
+        {"datasource":"Prometheus","expr":"sum(rate(http_requests_total[1m])) by (method, status)","legendFormat":"{{method}} {{status}}"}
+      ]
+    },
+    {
+      "id": 8, "gridPos": {"x":12,"y":4,"w":12,"h":8},
+      "title": "Request Latency Percentiles",
+      "type": "timeseries",
+      "options": {"tooltip":{"mode":"multi"}},
+      "fieldConfig": {"defaults":{"unit":"s","custom":{"lineWidth":2}}},
+      "targets": [
+        {"datasource":"Prometheus","expr":"histogram_quantile(0.50, sum(rate(request_duration_seconds_bucket[5m])) by (le))","legendFormat":"p50"},
+        {"datasource":"Prometheus","expr":"histogram_quantile(0.95, sum(rate(request_duration_seconds_bucket[5m])) by (le))","legendFormat":"p95"},
+        {"datasource":"Prometheus","expr":"histogram_quantile(0.99, sum(rate(request_duration_seconds_bucket[5m])) by (le))","legendFormat":"p99"}
+      ]
+    },
+    {
+      "id": 9, "gridPos": {"x":0,"y":12,"w":12,"h":8},
+      "title": "DB Query Rate by Operation",
+      "type": "timeseries",
+      "fieldConfig": {"defaults":{"unit":"reqps"}},
+      "targets": [
+        {"datasource":"Prometheus","expr":"sum(rate(db_queries_total[1m])) by (operation)","legendFormat":"{{operation}}"}
+      ]
+    },
+    {
+      "id": 10, "gridPos": {"x":12,"y":12,"w":12,"h":8},
+      "title": "DB Query Latency (p95)",
+      "type": "timeseries",
+      "fieldConfig": {"defaults":{"unit":"s"}},
+      "targets": [
+        {"datasource":"Prometheus","expr":"histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket[5m])) by (le, operation))","legendFormat":"p95 {{operation}}"}
+      ]
+    },
+    {
+      "id": 11, "gridPos": {"x":0,"y":20,"w":24,"h":8},
+      "title": "Application Logs (Loki)",
+      "type": "logs",
+      "options": {"dedupStrategy":"none","enableLogDetails":true,"prettifyLogMessage":true,"showTime":true},
+      "targets": [
+        {"datasource":"Loki","expr":"{container=\"config-app\"} | json","legendFormat":""}
+      ]
     }
-  ],
-  "refresh": "30s",
-  "schemaVersion": 38,
-  "tags": ["config-service", "platform"],
-  "time": { "from": "now-1h", "to": "now" },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Config Service",
-  "uid": "config-service-v1",
-  "version": 1
+  ]
 }

@@ -522,10 +522,62 @@ rate(kafka_messages_total[2m])
 histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket[2m])) by (le, operation))
 ```
 
-**Grafana Dashboard:**
-- Open http://localhost:3000 (admin/admin)
-- Go to **Dashboards → Browse → Config Service**
-- The dashboard auto-loads from `deployments/manifests/grafana-dashboard.json`
+**Grafana Dashboard — Auto-provisioned:**
+
+The dashboard loads **automatically** when docker-compose starts. No manual import needed.
+
+**How it works:**
+```
+docker-compose mounts 3 files into Grafana:
+  grafana-datasource.yml              → tells Grafana about Prometheus + Loki
+  grafana-dashboard-provisioning.yml  → tells Grafana WHERE to find dashboard JSONs
+  grafana-dashboard.json              → the actual dashboard (11 panels)
+```
+
+**How to open it:**
+1. Start stack: `docker compose up -d`
+2. Open **http://localhost:3000** → login `admin / admin`
+3. Left sidebar → **Dashboards** → **Config Service — Full Observability**
+
+**Dashboard panels:**
+
+| Panel | Metric |
+|---|---|
+| Request Rate | `rate(http_requests_total[1m])` |
+| Error Rate % | 5xx / total × 100 |
+| P99 Latency | `histogram_quantile(0.99, ...)` |
+| Config Upserts | `increase(config_upserts_total[5m])` |
+| Config Reads | `increase(config_reads_total[5m])` |
+| Kafka Events | `increase(kafka_messages_total[5m])` |
+| Request Rate by Method+Status | breakdown per endpoint |
+| Latency p50/p95/p99 curves | percentile comparison |
+| DB Query Rate by operation | upsert vs get |
+| DB Query Latency p95 | DB performance |
+| App Logs | Loki live logs — `{container="config-app"}` |
+
+**Generate data to see graphs:**
+```bash
+# Create a few configs
+for i in 1 2 3 4 5; do
+  curl -s -X POST http://localhost:8080/configs \
+    -H "Content-Type: application/json" \
+    -d "{\"id\":\"app-$i\",\"host\":\"10.0.0.$i\",\"port\":808$i,\"app_name\":\"service-$i\",\"log_level\":\"info\"}"
+done
+
+# Read them back
+for i in 1 2 3 4 5; do curl -s http://localhost:8080/configs/app-$i; done
+```
+
+**If dashboard is missing** (volume cached from old run):
+```bash
+# Restart Grafana to pick up provisioning
+docker compose restart grafana
+
+# OR manually import via API
+curl -s -X POST http://admin:admin@localhost:3000/api/dashboards/import \
+  -H "Content-Type: application/json" \
+  -d "{\"dashboard\": $(cat deployments/manifests/grafana-dashboard.json), \"overwrite\": true, \"folderId\": 0}"
+```
 
 ---
 
