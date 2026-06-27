@@ -2,7 +2,43 @@
 
 > **For reviewers who can't run the setup** — this file captures every layer of the stack with real outputs, exact Prometheus queries, and instructions for where to look in each UI.
 >
-> All outputs below were collected from a running Docker Compose stack (the fastest way to validate).
+> All outputs below were collected from a live Minikube cluster after running `./scripts/minikube-setup.sh`.
+
+---
+
+## Screenshots — Live Minikube Cluster
+
+All four observability tools captured from a single running Minikube cluster after a load test.
+
+### Grafana — Config Service Full Observability Dashboard
+
+![Grafana Dashboard](docs/screenshots/grafana-dashboard.png)
+
+> Dashboard auto-provisioned via ConfigMap. Shows real-time request rate (0.4 req/s), 0% error rate, P99 latency 33ms, upsert/read/kafka event counters from load test.
+
+---
+
+### Prometheus — `rate(http_requests_total[5m])`
+
+![Prometheus Metrics](docs/screenshots/prometheus-metrics.png)
+
+> Prometheus scraping config-service via ServiceMonitor. Query shows per-path, per-method, per-status breakdown. Multiple series visible from load test traffic across `/configs/*` paths.
+
+---
+
+### Jaeger — `handler.UpsertConfig` Distributed Traces
+
+![Jaeger Traces](docs/screenshots/jaeger-traces.png)
+
+> 4 traces for `handler.UpsertConfig` from `config-service`. Each trace has 2 spans (handler → service). Duration range: 3–11ms. Traces exported via OTel Collector → jaeger-collector gRPC.
+
+---
+
+### Loki — Structured JSON Logs (`{app="config-service"}`)
+
+![Loki Logs](docs/screenshots/loki-logs.png)
+
+> Loki Explore view showing 195 info + 54 error log lines. Logs are structured JSON (request_id, method, path, status, latency). Promtail ships pod logs automatically.
 
 ---
 
@@ -564,7 +600,8 @@ Run each in a separate terminal (or use `make port-forward`):
 kubectl -n config-service port-forward svc/config-service 8080:80 &
 kubectl -n config-service port-forward svc/prometheus-grafana 3000:80 &
 kubectl -n config-service port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 &
-kubectl -n config-service port-forward svc/jaeger-allInOne 16686:16686 &
+kubectl -n config-service port-forward svc/jaeger-query 16686:16686 &
+kubectl -n config-service port-forward svc/loki-gateway 3100:80 &
 ```
 
 | Service | URL | Purpose |
@@ -573,3 +610,6 @@ kubectl -n config-service port-forward svc/jaeger-allInOne 16686:16686 &
 | Grafana | http://localhost:3000 | Metrics + Logs dashboard |
 | Prometheus | http://localhost:9090 | Raw metric queries, targets page |
 | Jaeger | http://localhost:16686 | Distributed traces |
+| Loki | http://localhost:3100 | Log query API |
+
+> **Trace pipeline:** App → OTel Collector (gRPC 4317) → `jaeger-collector:4317` → Jaeger storage → `jaeger-query:16686` UI

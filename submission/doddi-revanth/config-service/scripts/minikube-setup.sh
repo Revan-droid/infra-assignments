@@ -326,7 +326,7 @@ helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   --set image.pullPolicy=IfNotPresent \
   --set "config.receivers.otlp.protocols.grpc.endpoint=0.0.0.0:4317" \
   --set "config.receivers.otlp.protocols.http.endpoint=0.0.0.0:4318" \
-  --set "config.exporters.otlp/jaeger.endpoint=jaeger.${NAMESPACE}.svc.cluster.local:4317" \
+  --set "config.exporters.otlp/jaeger.endpoint=jaeger-collector.${NAMESPACE}.svc.cluster.local:4317" \
   --set "config.exporters.otlp/jaeger.tls.insecure=true" \
   --set "config.service.pipelines.traces.receivers[0]=otlp" \
   --set "config.service.pipelines.traces.exporters[0]=otlp/jaeger" \

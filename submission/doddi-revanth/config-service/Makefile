@@ -115,11 +115,12 @@ logs: ## Tail application logs
 	kubectl -n $(NAMESPACE) logs -l app.kubernetes.io/name=config-service -f --tail=100
 
 port-forward: ## Port-forward all services (run in separate terminal)
-	@echo "Forwarding: config-service=8080 grafana=3000 prometheus=9090 jaeger=16686"
+	@echo "Forwarding: config-service=8080 grafana=3000 prometheus=9090 jaeger=16686 loki=3100"
 	kubectl -n $(NAMESPACE) port-forward svc/config-service 8080:80 &
 	kubectl -n $(NAMESPACE) port-forward svc/prometheus-grafana 3000:80 &
 	kubectl -n $(NAMESPACE) port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 &
-	kubectl -n $(NAMESPACE) port-forward svc/jaeger-allInOne 16686:16686 &
+	kubectl -n $(NAMESPACE) port-forward svc/jaeger-query 16686:16686 &
+	kubectl -n $(NAMESPACE) port-forward svc/loki-gateway 3100:80 &
 	@wait
 
 status: ## Show deployment status
