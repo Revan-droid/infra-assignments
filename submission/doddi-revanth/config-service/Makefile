@@ -4,7 +4,6 @@ CLUSTER_NAME   ?= config-service
 NAMESPACE      ?= config-service
 HELM_RELEASE   ?= config-service
 HELM_CHART_DIR  = deployments/helm/config-service
-REGISTRY       ?= localhost:5001
 
 .PHONY: all cluster build docker docker-push migrate deploy test smoke destroy clean \
         terraform terraform-init terraform-plan terraform-apply terraform-destroy \
@@ -13,13 +12,9 @@ REGISTRY       ?= localhost:5001
 all: cluster build docker migrate deploy smoke
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
-cluster: ## Create Kind cluster
-	@echo "▶ Creating Kind cluster: $(CLUSTER_NAME)"
-	@kind get clusters | grep -q $(CLUSTER_NAME) || kind create cluster \
-		--name $(CLUSTER_NAME) \
-		--config deployments/manifests/kind-config.yaml
-	@echo "▶ Setting kubectl context"
-	kubectl cluster-info --context kind-$(CLUSTER_NAME)
+cluster: ## Create Minikube cluster and deploy full stack
+	@echo "▶ Running Minikube setup (Postgres · Kafka · App · Observability)"
+	./scripts/minikube-setup.sh
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 build: ## Build Go binary
@@ -32,13 +27,13 @@ docker: ## Build Docker image
 	docker tag $(IMAGE_NAME):$(IMAGE_TAG) $(IMAGE_NAME):latest
 
 docker-push: docker ## Push image to registry
-	docker tag $(IMAGE_NAME):$(IMAGE_TAG) $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
-	docker push $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+	docker tag $(IMAGE_NAME):$(IMAGE_TAG) localhost:5001/$(IMAGE_NAME):$(IMAGE_TAG)
+	docker push localhost:5001/$(IMAGE_NAME):$(IMAGE_TAG)
 
-kind-load: docker ## Load image into Kind cluster
-	@echo "▶ Loading image into Kind"
-	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(CLUSTER_NAME)
-	kind load docker-image $(IMAGE_NAME):latest --name $(CLUSTER_NAME)
+minikube-load: docker ## Load image into Minikube
+	@echo "▶ Loading image into Minikube"
+	minikube image load $(IMAGE_NAME):$(IMAGE_TAG) --profile $(CLUSTER_NAME)
+	minikube image load $(IMAGE_NAME):latest --profile $(CLUSTER_NAME)
 
 # ─── Terraform ────────────────────────────────────────────────────────────────
 terraform-init: ## Terraform init
@@ -63,7 +58,7 @@ migrate-down: ## Roll back last migration
 	migrate -path migrations -database "$(DATABASE_URL)" down 1
 
 # ─── Deploy ───────────────────────────────────────────────────────────────────
-deploy: kind-load terraform ## Deploy application via Helm
+deploy: minikube-load ## Deploy application via Helm into Minikube
 	@echo "▶ Deploying Helm release: $(HELM_RELEASE)"
 	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART_DIR) \
 		--namespace $(NAMESPACE) \
@@ -119,15 +114,20 @@ helm-diff: ## Show diff between deployed and local chart
 logs: ## Tail application logs
 	kubectl -n $(NAMESPACE) logs -l app.kubernetes.io/name=config-service -f --tail=100
 
-port-forward: ## Port-forward service to localhost:8080
-	kubectl -n $(NAMESPACE) port-forward svc/$(HELM_RELEASE) 8080:8080
+port-forward: ## Port-forward all services (run in separate terminal)
+	@echo "Forwarding: config-service=8080 grafana=3000 prometheus=9090 jaeger=16686"
+	kubectl -n $(NAMESPACE) port-forward svc/config-service 8080:80 &
+	kubectl -n $(NAMESPACE) port-forward svc/prometheus-grafana 3000:80 &
+	kubectl -n $(NAMESPACE) port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 &
+	kubectl -n $(NAMESPACE) port-forward svc/jaeger-allInOne 16686:16686 &
+	@wait
 
 status: ## Show deployment status
 	kubectl -n $(NAMESPACE) get pods,svc,deploy,hpa
 
 # ─── Cleanup ──────────────────────────────────────────────────────────────────
-destroy: ## Delete Kind cluster
-	kind delete cluster --name $(CLUSTER_NAME)
+destroy: ## Delete Minikube cluster
+	minikube delete --profile $(CLUSTER_NAME)
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html

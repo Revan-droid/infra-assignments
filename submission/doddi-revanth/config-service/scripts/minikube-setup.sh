@@ -355,8 +355,6 @@ helm upgrade --install prometheus prometheus/kube-prometheus-stack \
   --set prometheusOperator.admissionWebhooks.enabled=false \
   --set prometheusOperator.admissionWebhooks.patch.enabled=false \
   --set prometheusOperator.tls.enabled=false \
-  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
-  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
   --set "prometheus.prometheusSpec.image.registry=docker.io" \
   --set "prometheus.prometheusSpec.image.repository=prom/prometheus" \
   --set "prometheus.prometheusSpec.image.tag=v2.53.0" \
