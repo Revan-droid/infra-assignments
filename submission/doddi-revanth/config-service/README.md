@@ -1,8 +1,424 @@
 # Config Service
 
-> A production-style Go service for storing application config in PostgreSQL, emitting Kafka events, and exposing traces, metrics, and logs.
+> A production-style Go service for storing application config in PostgreSQL, emitting Kafka events, and exposing distributed traces, metrics, and structured logs — deployable in 5 minutes via Docker Compose or 15 minutes on Minikube.
+
+📸 **Don't have time to run it?** See [VISUALISE.md](./VISUALISE.md) — real API outputs, metrics, Kafka events, Prometheus queries, and dashboard screenshots guide.
 
 ## Architecture
+
+```text
+                    +-------------------------------+
+                    |           Clients             |
+                    | curl / smoke-test / Grafana   |
+                    +---------------+---------------+
+                                    |
+                                    v
+                      +-------------+-------------+
+                      |       config-service      |
+                      | chi + middleware + OTel   |
+                      +------+------+------+------+
+                             |      |      |
+                             |      |      +--------------------+
+                             |      |                           |
+                             v      v                           v
+                    +-----------+  +----------------+   +---------------+
+                    | PostgreSQL |  |     Kafka      |   | OTel Collector|
+                    | configs    |  | config-events  |   +-------+-------+
+                    +-----------+  +----------------+           |
+                                                                 v
+                                             +-------------------+-------------------+
+                                             | Jaeger | Prometheus | Loki | Grafana |
+                                             +---------------------------------------+
+```
+
+## Quick Start
+
+### Option 1: Docker Compose (5 min) — Recommended for local dev
+
+**Prerequisites**
+- Docker Desktop
+
+**Start the full stack**
+
+```bash
+cd submission/doddi-revanth/config-service
+
+docker compose up -d --build
+```
+
+**Verify the stack**
+
+```bash
+docker compose ps
+curl http://localhost:8080/ping
+curl http://localhost:8080/ready
+./scripts/smoke-test.sh http://localhost:8080
+```
+
+**Create and read a config**
+
+```bash
+curl -X POST http://localhost:8080/configs \
+  -H "Content-Type: application/json" \
+  -d '{"id":"cfg_1","host":"db.internal","port":5432,"app_name":"my-app","log_level":"INFO"}'
+
+curl http://localhost:8080/configs/cfg_1
+```
+
+**Dashboard and service URLs**
+
+| Service | URL | Notes |
+|---|---|---|
+| App API | http://localhost:8080 | `GET /ping`, `POST /configs` |
+| Grafana | http://localhost:3000 | login `admin / admin` — dashboard auto-provisioned |
+| Prometheus | http://localhost:9090 | metrics queries |
+| Jaeger | http://localhost:16686 | distributed traces |
+| Loki | http://localhost:3100/ready | log aggregation |
+
+**Stop the stack**
+
+```bash
+docker compose down
+docker compose down -v   # also remove volumes
+```
+
+---
+
+### Option 2: Minikube (15 min) — Full Kubernetes experience
+
+**Prerequisites**
+
+```bash
+brew install minikube kubectl helm
+```
+
+**Deploy everything with one script**
+
+```bash
+cd submission/doddi-revanth/config-service
+
+./scripts/minikube-setup.sh
+```
+
+The script:
+1. Starts a Minikube cluster (`config-service` profile, 4 CPU / 6 GB RAM)
+2. Enables `metrics-server` for HPA
+3. Vendors Go modules **inside** a `golang:1.22` container (works behind corporate TLS proxies)
+4. Builds `config-service:local` directly in the Minikube Docker daemon (no registry push needed)
+5. Installs in order: PostgreSQL → Kafka → **config-service** → Loki → Promtail → Jaeger → OTel Collector → Prometheus + Grafana
+6. Re-enables the Prometheus `ServiceMonitor` after CRDs exist
+7. Auto-imports the Grafana dashboard via labelled ConfigMap
+
+**Port-forward all services** (run in a separate terminal)
+
+```bash
+# App
+kubectl -n config-service port-forward svc/config-service 8080:80 &
+
+# Observability UIs
+kubectl -n config-service port-forward svc/prometheus-grafana 3000:80 &
+kubectl -n config-service port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090 &
+kubectl -n config-service port-forward svc/jaeger-allInOne 16686:16686 &
+```
+
+Or use `make port-forward` which does all of the above at once.
+
+**Verify the deployment**
+
+```bash
+kubectl -n config-service get pods           # all pods Running
+curl http://localhost:8080/ping              # pong
+curl http://localhost:8080/ready             # {"status":"ready","checks":{"database":true,"kafka":true}}
+./scripts/smoke-test.sh http://localhost:8080
+```
+
+**Service URLs (after port-forward)**
+
+| Service | URL | Credentials |
+|---|---|---|
+| App API | http://localhost:8080 | — |
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | — |
+| Jaeger | http://localhost:16686 | — |
+
+**Destroy**
+
+```bash
+minikube delete --profile config-service
+# or
+make destroy
+```
+
+---
+
+## Go Application — Code Walkthrough
+
+### Project Structure
+
+```text
+.
+├── .github/workflows/ci.yml                 # CI pipeline: vet, lint, tests, build, helm, terraform, YAML
+├── .github/workflows/cd.yml                 # CD-shaped pipeline: validate, push image, helm dry-run
+├── cmd/server/main.go                       # Application bootstrap, dependency wiring, routes, graceful shutdown
+├── config.yaml.example                      # Optional file-based config example for local runs
+├── deployments/helm/config-service/         # Helm chart for the application deployment
+├── deployments/manifests/                   # Compose/Grafana/Prometheus/OTel support manifests
+├── docker-compose.yml                       # One-command local platform stack
+├── Dockerfile                               # Multi-stage image build for the Go service
+├── docs/                                    # Supporting notes and assignment artifacts
+├── internal/                                # Application code: config, handlers, service, repo, telemetry
+├── migrations/                              # Embedded SQL schema migrations
+├── scripts/                                 # Setup, migration, and smoke-test automation
+├── terraform/                               # Local-cluster Terraform validation modules
+├── go.mod                                   # Go module definition
+├── go.sum                                   # Module checksums
+├── vendor/                                  # Vendored Go modules (enables offline Docker build)
+├── Makefile                                 # Convenience targets for build/test/deploy flows
+├── VISUALISE.md                             # Reviewer guide with real outputs and Prometheus/Grafana queries
+└── README.md                                # This file
+```
+
+### internal/ — The Go Application
+
+| Package | Responsibility |
+|---|---|
+| `internal/config/` | Viper config loading — env vars → config.yaml → defaults |
+| `internal/models/` | Domain structs: `Config`, `UpsertRequest`, `ErrorResponse` |
+| `internal/database/` | `pgxpool` connection factory + startup migrations; 10-retry connect loop |
+| `internal/repository/` | `Repository` interface, PostgreSQL impl, in-memory impl for tests |
+| `internal/service/` | `GetConfig` / `UpsertConfig` business logic; publishes Kafka event after upsert |
+| `internal/handlers/` | HTTP handlers for all endpoints + health |
+| `internal/health/` | Readiness checks for PostgreSQL and Kafka |
+| `internal/kafka/` | `SaramaProducer` (real) + `NoopProducer` (fallback when `ENABLE_KAFKA=false`) |
+| `internal/middleware/` | Request ID propagation, JSON structured logging, panic recovery, per-request timeout |
+| `internal/telemetry/` | OpenTelemetry setup, Prometheus metrics registration, Zap logger construction |
+
+### migrations/ — SQL Migrations
+
+- `000001_create_configs.up.sql` — creates the `configs` table and `idx_configs_app_name` index.
+- `000001_create_configs.down.sql` — drops the `configs` table.
+- `embed.go` — `//go:embed *.sql` compiles SQL into the binary so containers have no loose files.
+- `RunMigrations()` is called automatically on startup in `cmd/server/main.go`.
+
+### Request Flow (POST /configs)
+
+```text
+HTTP Request
+  → middleware chain (RequestID → Logging → Recovery → Timeout)
+  → ConfigHandler.UpsertConfig
+  → service.UpsertConfig         (OTel span, increments config_upserts_total)
+  → repository.Upsert            (pgx ON CONFLICT upsert, increments db_queries_total)
+  → kafka.PublishConfigEvent     (best-effort, warn on failure, increments kafka_messages_total)
+  → HTTP 200 + JSON response
+```
+
+---
+
+## API Reference
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/ping` | Basic liveness — returns `pong` |
+| GET | `/live` | Kubernetes liveness probe — always 200 |
+| GET | `/ready` | Readiness — checks DB + Kafka connectivity |
+| GET | `/metrics` | Prometheus scrape endpoint |
+| GET | `/configs/{id}` | Fetch one config by ID |
+| POST | `/configs` | Create or update (upsert) a config |
+
+**POST /configs — request body**
+
+```json
+{
+  "id": "cfg_1",
+  "host": "db.internal",
+  "port": 5432,
+  "app_name": "my-app",
+  "log_level": "INFO"
+}
+```
+
+**Success (200)**
+
+```json
+{
+  "id": "cfg_1",
+  "host": "db.internal",
+  "port": 5432,
+  "app_name": "my-app",
+  "log_level": "info",
+  "created_at": "2026-06-27T00:00:00Z",
+  "updated_at": "2026-06-27T00:00:00Z"
+}
+```
+
+**Not found (404)**
+
+```json
+{
+  "error": "config not found",
+  "code": 404,
+  "trace_id": "16a9e66b-2a61-4ac6-a11a-c79160cc6ffe"
+}
+```
+
+---
+
+## Observability
+
+### Grafana Dashboard
+
+- URL: **http://localhost:3000** — login **admin / admin**
+- Dashboard name: **Config Service — Full Observability**
+- Auto-provisioned (no manual import) in both Docker Compose and Minikube
+- 11 panels: HTTP request rate, error rate, p99 latency, config upserts/reads, Kafka events, DB query rate, DB latency, active configs, live Loki log stream
+
+Generate traffic to populate the dashboard:
+
+```bash
+for i in $(seq 1 5); do
+  curl -s -X POST http://localhost:8080/configs \
+    -H "Content-Type: application/json" \
+    -d "{\"id\":\"svc-${i}\",\"host\":\"db-${i}.internal\",\"port\":$((5430+i)),\"app_name\":\"service-${i}\",\"log_level\":\"info\"}" > /dev/null
+  curl -s http://localhost:8080/configs/svc-${i} > /dev/null
+done
+```
+
+### Prometheus Metrics
+
+URL: **http://localhost:9090**
+
+Key metrics exposed at `/metrics`:
+
+| Metric | Type | Description |
+|---|---|---|
+| `http_requests_total` | Counter | Requests by method, path, status |
+| `request_duration_seconds` | Histogram | Latency by method and path |
+| `config_upserts_total` | Counter | Total POST /configs calls |
+| `config_reads_total` | Counter | Total GET /configs/{id} calls |
+| `db_queries_total` | Counter | DB queries by operation |
+| `kafka_messages_total` | Counter | Events published to Kafka |
+
+### Jaeger (Distributed Tracing)
+
+URL: **http://localhost:16686**
+
+```bash
+curl -X POST http://localhost:8080/configs \
+  -H "Content-Type: application/json" \
+  -d '{"id":"trace-demo","host":"trace.internal","port":8081,"app_name":"trace-app","log_level":"INFO"}'
+```
+
+Open Jaeger → select service `config-service` → find `handler.UpsertConfig` traces showing spans across handler → service → database → Kafka layers.
+
+### Loki (Structured Logs)
+
+In Grafana Explore with datasource **Loki**:
+
+```logql
+{container="config-service"}
+```
+
+Filter for errors:
+
+```logql
+{container="config-service"} |= "error"
+```
+
+---
+
+## CI/CD Pipelines
+
+### CI (.github/workflows/ci.yml)
+
+Triggers on push to `main`/`develop` and PRs targeting `main`.
+
+| Job | What it does |
+|---|---|
+| `go-quality` | `go vet`, `gofmt` check, `golangci-lint` |
+| `unit-tests` | `go test ./... -race -count=1` + coverage upload |
+| `docker-build` | Container image build with layer caching |
+| `helm-lint` | `helm lint` + `helm template` dry-run |
+| `terraform` | `terraform fmt -check` + `terraform validate` |
+| `yaml-lint` | `yamllint` over repository |
+
+### CD (.github/workflows/cd.yml)
+
+Triggers on `workflow_dispatch` or successful CI on `main`.
+
+- Builds and pushes image to `ghcr.io` (requires `GHCR_TOKEN` secret)
+- Runs `helm upgrade --install --dry-run=client` with new image tag
+- Does **not** deploy to a real cluster (local Minikube target); in production add cluster credentials and remove `--dry-run`
+
+---
+
+## Testing
+
+### Test coverage
+
+| File | What is tested |
+|---|---|
+| `internal/handlers/handler_test.go` | HTTP handler behavior with in-memory repo; no DB required |
+| `internal/repository/repository_test.go` | In-memory repo correctness and concurrency |
+| `internal/service/service_test.go` | Service logic with mocked dependencies |
+
+### Run tests
+
+```bash
+cd submission/doddi-revanth/config-service
+
+# All tests (requires Go 1.22+)
+go test ./... -race -count=1 -timeout 60s -v
+
+# Via Docker — no local Go install needed
+docker run --rm -v "$(pwd)":/workspace -w /workspace golang:1.22 \
+  go test ./... -race -v
+
+# With coverage report
+go test ./... -race -coverprofile=coverage.out && go tool cover -html=coverage.out
+```
+
+### Smoke test
+
+```bash
+./scripts/smoke-test.sh http://localhost:8080
+```
+
+---
+
+## Configuration Reference
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8080` | HTTP listen port |
+| `LOG_LEVEL` | `info` | Zap log verbosity (`debug`, `info`, `warn`, `error`) |
+| `DATABASE_URL` | `postgres://configuser:configpass@localhost:5432/configdb?sslmode=disable` | PostgreSQL DSN |
+| `KAFKA_BROKERS` | `localhost:9092` | Comma-separated Kafka broker list |
+| `ENABLE_KAFKA` | `false` | `true` enables real Kafka producer; `false` uses noop (app still works) |
+| `ENABLE_METRICS` | `true` | Exposes `/metrics` Prometheus endpoint |
+| `OTLP_ENDPOINT` | `` | OTLP gRPC endpoint for trace export (e.g. `otel-collector:4317`) |
+
+Config loading order: **environment variables → config.yaml → hardcoded defaults**
+
+---
+
+## Security
+
+- Runs as non-root in Kubernetes (`runAsUser: 65532`, `runAsNonRoot: true`)
+- Read-only root filesystem in Helm deployment
+- All Linux capabilities dropped; privilege escalation disallowed
+- `PodDisruptionBudget` with `minAvailable: 1`
+- `NetworkPolicy` restricting egress to PostgreSQL, Kafka, DNS, and OTLP
+
+---
+
+## Known Limitations
+
+- No authentication or authorization layer on the config API
+- Single config value stored per ID — no version history
+- Kafka publishing is best-effort and non-blocking (write succeeds even if Kafka is down)
+- Jaeger and Loki are configured for local/demo usage, not durable production storage
+- CD pipeline demonstrates structure only; real cluster credentials are intentionally not wired
+
 
 ```text
                     +-------------------------------+
