@@ -3,12 +3,15 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /build
 
-# Copy vendor dir + source — no network access needed during build
-# Run `go mod vendor` locally before building this image
+# vendor/ is pre-created by the setup scripts (scripts/kind-setup.sh or
+# scripts/minikube-setup.sh) using a go mod vendor step that injects the macOS
+# system CA certificate bundle to handle corporate TLS proxies. This means the
+# Docker build never needs network access — pure compilation only.
 COPY go.mod go.sum ./
 COPY vendor/ vendor/
-COPY . .
 
+# Copy source and build a statically linked binary
+COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -mod=vendor \
     -ldflags="-w -s -X main.version=1.0.0" \
@@ -17,8 +20,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/server
 
 # ─── Runtime Stage ─────────────────────────────────────────────────────────────
-# Using alpine (docker.io) instead of gcr.io/distroless — gcr.io may be blocked
-# on corporate networks. Alpine gives us a shell for debugging too.
 FROM docker.io/alpine:3.19
 
 RUN apk --no-cache add ca-certificates tzdata && \

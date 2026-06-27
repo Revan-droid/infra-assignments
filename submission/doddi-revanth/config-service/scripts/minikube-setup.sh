@@ -52,8 +52,8 @@ enable_minikube_docker_env() {
   eval "$(minikube docker-env --profile "${PROFILE}")"
 }
 
-disable_minikube_docker_env() {
-  eval "$(minikube docker-env --profile "${PROFILE}" --unset)"
+use_host_docker() {
+  eval "$(minikube docker-env --profile "${PROFILE}" --unset)" 2>/dev/null || true
 }
 
 helm_clean() {
@@ -62,6 +62,56 @@ helm_clean() {
     yellow "Removing stale release: $release"
     helm uninstall "$release" --namespace "${NAMESPACE}" --wait 2>/dev/null || true
   fi
+}
+
+# Create vendor/ directory with corporate CA injection.
+#
+# WHY this approach?
+#   Corporate TLS proxies intercept HTTPS and replace certificates with their own CA.
+#   Docker build containers (golang:1.22-alpine) only trust the standard CA bundle,
+#   not the corporate CA. This causes go mod download to fail with:
+#     "tls: failed to verify certificate: x509: certificate signed by unknown authority"
+#
+#   On macOS, the corporate CA is in the system keychain. We export ALL trusted certs
+#   from the keychain and inject them into a golang:1.22 (Debian) container.
+#   With corporate CA trusted, go mod vendor runs successfully.
+#   After this step, Docker build uses -mod=vendor — ZERO network access.
+create_vendor_dir() {
+  if [ -d "vendor" ]; then
+    green "vendor/ already exists — skipping go mod vendor"
+    return 0
+  fi
+
+  yellow "Creating vendor/ directory (injecting macOS CA certs for corporate network)..."
+  local tmp_certs
+  tmp_certs=$(mktemp /tmp/macos-certs-XXXXXX.pem)
+
+  # Export all trusted certificates from macOS keychains (includes corporate CA)
+  security find-certificate -a -p /Library/Keychains/System.keychain >> "${tmp_certs}" 2>/dev/null || true
+  security find-certificate -a -p "${HOME}/Library/Keychains/login.keychain-db" >> "${tmp_certs}" 2>/dev/null || true
+
+  local mount_args=()
+  local ca_update_cmd=""
+  if [ -s "${tmp_certs}" ]; then
+    yellow "Found macOS certificates — injecting into go mod vendor container"
+    mount_args=(-v "${tmp_certs}:/usr/local/share/ca-certificates/macos-extra.crt:ro")
+    ca_update_cmd="update-ca-certificates >/dev/null 2>&1 &&"
+  else
+    yellow "No macOS certificates found — trying without CA injection"
+  fi
+
+  # Use golang:1.22 (Debian) — handles multi-cert PEM via update-ca-certificates.
+  # Use host Docker (not minikube's) since minikube hasn't started yet / we need certs.
+  use_host_docker
+  docker run --rm \
+    -v "$(pwd):/workspace" \
+    "${mount_args[@]}" \
+    -w /workspace \
+    golang:1.22 \
+    sh -c "${ca_update_cmd} GONOSUMDB='*' go mod vendor"
+
+  rm -f "${tmp_certs}"
+  green "vendor/ created successfully"
 }
 
 # ─── Step 0: Prerequisites ────────────────────────────────────────────────────
@@ -88,49 +138,25 @@ else
 fi
 kubectl config use-context "${PROFILE}"
 
-# ─── Step 2: Point Docker to Minikube's daemon ───────────────────────────────
-# This is the KEY advantage over Kind:
-#   Images built/pulled after this line are inside Minikube directly.
-#   Pods find them immediately with pullPolicy=IfNotPresent — no load step needed.
-header "Step 2: Switch Docker to Minikube daemon"
+# ─── Step 2: Build app image on HOST docker then load into Minikube ──────────
+# vendor/ must exist before docker build (-mod=vendor Dockerfile).
+# create_vendor_dir uses golang:1.22 (Debian) with macOS CA injection.
+# After vendor/ is created, docker build never hits the network.
+header "Step 2: Build App Image (vendor → build → load into Minikube)"
+use_host_docker
+create_vendor_dir
+yellow "Building config-service:${IMAGE_TAG} (linux/amd64, -mod=vendor)..."
+docker build --platform linux/amd64 -t "config-service:${IMAGE_TAG}" .
+yellow "Loading image into Minikube..."
+minikube image load "config-service:${IMAGE_TAG}" --profile "${PROFILE}"
+green "App image ready in Minikube"
+
+# ─── Step 3: Switch to Minikube docker for infra image pulls ─────────────────
+header "Step 3: Switch Docker to Minikube daemon for infra pulls"
 enable_minikube_docker_env
 green "Docker now talking to Minikube's daemon"
 
-# ─── Step 3: Vendor dependencies (for offline Docker build) ──────────────────
-header "Step 3: Go mod vendor"
-if [ ! -d "vendor" ]; then
-  yellow "vendor/ not found — running go mod vendor inside Docker..."
-  # Reset to host Docker temporarily so the golang:1.22 Debian image can run go mod vendor.
-  disable_minikube_docker_env
-  if ! docker run --rm \
-    -e GONOSUMDB='*' \
-    -e GOFLAGS='-mod=mod' \
-    -e GOPROXY='direct' \
-    -v "$(pwd)":/workspace \
-    -w /workspace \
-    golang:1.22 \
-    go mod vendor; then
-    enable_minikube_docker_env
-    red "go mod vendor failed"
-    exit 1
-  fi
-  # Re-enable the Minikube Docker daemon for all remaining image pulls/builds.
-  enable_minikube_docker_env
-  green "vendor/ created"
-else
-  green "vendor/ found — skipping"
-fi
-
-# ─── Step 4: Build app image directly inside Minikube ────────────────────────
-header "Step 4: Build App Image"
-# Building inside Minikube's Docker daemon means the image is instantly available
-# to pods — no kind load, no crane, no multi-arch issues.
-yellow "Building config-service:${IMAGE_TAG} inside Minikube..."
-docker build -t "config-service:${IMAGE_TAG}" .
-green "App image built inside Minikube"
-
-# ─── Step 5: Namespace + Helm repos ──────────────────────────────────────────
-header "Step 5: Namespace & Helm Repos"
+header "Step 4: Namespace & Helm Repos"
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 green "Namespace: ${NAMESPACE}"
 
@@ -142,8 +168,8 @@ helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm
 helm repo update --fail-on-repo-update-fail 2>/dev/null || helm repo update
 green "Helm repos ready"
 
-# ─── Step 6: Secrets ─────────────────────────────────────────────────────────
-header "Step 6: Secrets"
+# ─── Step 5: Secrets ─────────────────────────────────────────────────────────
+header "Step 5: Secrets"
 kubectl create secret generic config-service-db \
   --namespace "${NAMESPACE}" \
   --from-literal=DATABASE_URL="postgres://configuser:${DB_PASSWORD}@postgres-postgresql.${NAMESPACE}.svc.cluster.local:5432/configdb?sslmode=disable" \

@@ -97,6 +97,57 @@ kind_load() {
   green "$image ready in Kind"
 }
 
+# Create vendor/ directory with corporate CA injection.
+#
+# WHY this approach?
+#   Corporate TLS proxies intercept HTTPS and replace certificates with their own CA.
+#   Docker build containers (golang:1.22-alpine) only trust the standard CA bundle,
+#   not the corporate CA. This causes go mod download to fail with:
+#     "tls: failed to verify certificate: x509: certificate signed by unknown authority"
+#
+#   On macOS, the corporate CA is in the system keychain. We export ALL trusted certs
+#   from the keychain and inject them into a golang:1.22 (Debian) container — Debian
+#   handles multi-certificate PEM files correctly via update-ca-certificates.
+#   With corporate CA trusted, go mod vendor runs successfully.
+#
+#   After this step, Docker build uses -mod=vendor and NEVER needs network access.
+create_vendor_dir() {
+  if [ -d "vendor" ]; then
+    green "vendor/ already exists — skipping go mod vendor"
+    return 0
+  fi
+
+  yellow "Creating vendor/ directory (injecting macOS CA certs for corporate network)..."
+  local tmp_certs
+  tmp_certs=$(mktemp /tmp/macos-certs-XXXXXX.pem)
+
+  # Export all trusted certificates from macOS keychains (includes corporate CA)
+  security find-certificate -a -p /Library/Keychains/System.keychain >> "${tmp_certs}" 2>/dev/null || true
+  security find-certificate -a -p "${HOME}/Library/Keychains/login.keychain-db" >> "${tmp_certs}" 2>/dev/null || true
+
+  local mount_args=()
+  if [ -s "${tmp_certs}" ]; then
+    yellow "Found macOS certificates ($(wc -l < "${tmp_certs}") lines) — injecting into container"
+    mount_args=(-v "${tmp_certs}:/usr/local/share/ca-certificates/macos-extra.crt:ro")
+    ca_update_cmd="update-ca-certificates >/dev/null 2>&1 &&"
+  else
+    yellow "No macOS certificates found — trying without CA injection"
+    ca_update_cmd=""
+  fi
+
+  # Use golang:1.22 (Debian) — it has update-ca-certificates and handles multi-cert PEM.
+  # GONOSUMDB=* skips sum.golang.org (also TLS-blocked on corporate networks).
+  docker run --rm \
+    -v "$(pwd):/workspace" \
+    "${mount_args[@]}" \
+    -w /workspace \
+    golang:1.22 \
+    sh -c "${ca_update_cmd} GONOSUMDB='*' go mod vendor"
+
+  rm -f "${tmp_certs}"
+  green "vendor/ created successfully"
+}
+
 # ─── Step 0: Prerequisites ────────────────────────────────────────────────────
 header "Checking prerequisites"
 for cmd in kind kubectl helm docker crane; do
@@ -146,33 +197,22 @@ green "Secrets applied"
 # ─── Step 4: Pre-load images into Kind ───────────────────────────────────────
 # We load these images locally BEFORE helm installs them.
 # This means the cluster nodes never need internet access for these images.
-header "Step 4: Pre-load images into Kind (avoids ImagePullBackOff)"
+header "Step 4: Build App Image & Pre-load all images into Kind"
+
+# ── vendor/ step ───────────────────────────────────────────────────────────────
+# Must run before docker build. Exports macOS system CAs so go mod vendor
+# trusts the corporate TLS proxy inside the golang:1.22 container.
+create_vendor_dir
 
 # ── App image ──────────────────────────────────────────────────────────────────
-# Vendor dependencies so Docker build never needs internet (go mod download fails
-# behind corporate TLS proxy). Uses local vendor/ dir with -mod=vendor flag.
-if [ ! -d "vendor" ]; then
-  yellow "vendor/ not found — running go mod vendor inside Docker..."
-  # Go is not installed natively on this machine — use Docker instead.
-  # GONOSUMDB=* skips checksum DB (sum.golang.org) TLS issues on corporate networks.
-  # GOPROXY=direct skips proxy.golang.org and downloads modules directly from source.
-  docker run --rm \
-    --platform linux/amd64 \
-    -e GONOSUMDB='*' \
-    -e GOFLAGS='-mod=mod' \
-    -e GOPROXY='direct' \
-    -v "$(pwd)":/workspace \
-    -w /workspace \
-    golang:1.22 \
-    go mod vendor
-  green "vendor/ created"
-else
-  green "vendor/ directory found — skipping go mod vendor"
-fi
-
+# vendor/ is now present. Docker build uses -mod=vendor — ZERO network access.
+# We save as a single-platform tar (linux/amd64) so kind load works reliably.
 yellow "Building config-service:${IMAGE_TAG} (linux/amd64, -mod=vendor)..."
 docker build --platform linux/amd64 -t "config-service:${IMAGE_TAG}" .
-kind load docker-image "config-service:${IMAGE_TAG}" --name "${CLUSTER_NAME}"
+yellow "Saving image tar and loading into Kind..."
+docker save "config-service:${IMAGE_TAG}" -o /tmp/config-service-app.tar
+kind load image-archive /tmp/config-service-app.tar --name "${CLUSTER_NAME}"
+rm -f /tmp/config-service-app.tar
 green "App image ready in Kind"
 
 # Infra images (bitnamilegacy = same content as bitnami, publicly accessible)
