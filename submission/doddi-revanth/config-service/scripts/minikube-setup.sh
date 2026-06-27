@@ -181,8 +181,8 @@ kubectl create secret generic config-service-kafka \
   --dry-run=client -o yaml | kubectl apply -f -
 green "Secrets applied"
 
-# ─── Step 7: PostgreSQL ───────────────────────────────────────────────────────
-header "Step 7: PostgreSQL  (chart ${POSTGRES_CHART_VERSION})"
+# ─── Step 6: PostgreSQL ───────────────────────────────────────────────────────
+header "Step 6: PostgreSQL  (chart ${POSTGRES_CHART_VERSION})"
 helm_clean postgres
 
 # Pull into Minikube's Docker first so Kubernetes doesn't hit the network
@@ -206,8 +206,8 @@ helm install postgres bitnami/postgresql \
   --wait --timeout=4m
 green "PostgreSQL ready"
 
-# ─── Step 8: Kafka ────────────────────────────────────────────────────────────
-header "Step 8: Kafka  (chart ${KAFKA_CHART_VERSION})"
+# ─── Step 7: Kafka ────────────────────────────────────────────────────────────
+header "Step 7: Kafka  (chart ${KAFKA_CHART_VERSION})"
 helm_clean kafka
 
 yellow "Pulling Kafka image into Minikube..."
@@ -233,49 +233,8 @@ helm install kafka bitnami/kafka \
   --wait --timeout=5m
 green "Kafka ready"
 
-# ─── Step 9: Prometheus + Grafana ─────────────────────────────────────────────
-header "Step 9: Prometheus + Grafana  (chart ${PROM_STACK_CHART_VERSION})"
-
-yellow "Pulling Prometheus stack images into Minikube..."
-docker pull --platform linux/amd64 prom/prometheus:v2.53.0
-docker pull --platform linux/amd64 prometheusoperator/prometheus-operator:v0.74.0
-docker pull --platform linux/amd64 prometheusoperator/prometheus-config-reloader:v0.74.0
-docker pull --platform linux/amd64 grafana/grafana:10.4.3
-
-helm upgrade --install prometheus prometheus/kube-prometheus-stack \
-  --version "${PROM_STACK_CHART_VERSION}" \
-  --namespace "${NAMESPACE}" \
-  --set grafana.adminPassword=admin \
-  --set grafana.persistence.enabled=false \
-  --set alertmanager.enabled=false \
-  --set kubeStateMetrics.enabled=false \
-  --set nodeExporter.enabled=false \
-  --set prometheusOperator.admissionWebhooks.enabled=false \
-  --set prometheusOperator.admissionWebhooks.patch.enabled=false \
-  --set prometheusOperator.tls.enabled=false \
-  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
-  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
-  --set "prometheus.prometheusSpec.image.registry=docker.io" \
-  --set "prometheus.prometheusSpec.image.repository=prom/prometheus" \
-  --set "prometheus.prometheusSpec.image.tag=v2.53.0" \
-  --set "prometheus.prometheusSpec.image.pullPolicy=IfNotPresent" \
-  --set "prometheusOperator.image.registry=docker.io" \
-  --set "prometheusOperator.image.repository=prometheusoperator/prometheus-operator" \
-  --set "prometheusOperator.image.tag=v0.74.0" \
-  --set "prometheusOperator.image.pullPolicy=IfNotPresent" \
-  --set "prometheusOperator.prometheusConfigReloader.image.registry=docker.io" \
-  --set "prometheusOperator.prometheusConfigReloader.image.repository=prometheusoperator/prometheus-config-reloader" \
-  --set "prometheusOperator.prometheusConfigReloader.image.tag=v0.74.0" \
-  --set "prometheusOperator.prometheusConfigReloader.image.pullPolicy=IfNotPresent" \
-  --set "grafana.image.repository=grafana/grafana" \
-  --set "grafana.image.tag=10.4.3" \
-  --set "grafana.image.pullPolicy=IfNotPresent" \
-  --values deployments/manifests/grafana-provisioning.yaml \
-  --wait --timeout=5m
-green "Prometheus + Grafana ready  (admin / admin)"
-
-# ─── Step 10: Jaeger ──────────────────────────────────────────────────────────
-header "Step 10: Jaeger  (chart ${JAEGER_CHART_VERSION})"
+# ─── Step 8: Jaeger ──────────────────────────────────────────────────────────
+header "Step 8: Jaeger  (chart ${JAEGER_CHART_VERSION})"
 docker pull --platform linux/amd64 jaegertracing/all-in-one:1.53.0
 
 helm upgrade --install jaeger jaeger/jaeger \
@@ -292,8 +251,8 @@ helm upgrade --install jaeger jaeger/jaeger \
   --wait --timeout=3m
 green "Jaeger ready"
 
-# ─── Step 11: OpenTelemetry Collector ─────────────────────────────────────────
-header "Step 11: OpenTelemetry Collector  (chart ${OTEL_CHART_VERSION})"
+# ─── Step 9: OpenTelemetry Collector ─────────────────────────────────────────
+header "Step 9: OpenTelemetry Collector  (chart ${OTEL_CHART_VERSION})"
 docker pull --platform linux/amd64 otel/opentelemetry-collector-k8s:0.97.0
 
 helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
@@ -312,8 +271,8 @@ helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   --wait --timeout=3m
 green "OTel Collector ready"
 
-# ─── Step 12: Loki ────────────────────────────────────────────────────────────
-header "Step 12: Loki  (chart ${LOKI_CHART_VERSION})"
+# ─── Step 10: Loki ────────────────────────────────────────────────────────────
+header "Step 10: Loki  (chart ${LOKI_CHART_VERSION})"
 docker pull --platform linux/amd64 grafana/loki:3.0.0
 
 helm upgrade --install loki grafana/loki \
@@ -333,8 +292,8 @@ helm upgrade --install loki grafana/loki \
   --wait --timeout=3m
 green "Loki ready"
 
-# ─── Step 13: Promtail ────────────────────────────────────────────────────────
-header "Step 13: Promtail  (chart ${PROMTAIL_CHART_VERSION})"
+# ─── Step 12: Promtail ────────────────────────────────────────────────────────
+header "Step 12: Promtail  (chart ${PROMTAIL_CHART_VERSION})"
 docker pull --platform linux/amd64 grafana/promtail:2.9.3
 
 helm upgrade --install promtail grafana/promtail \
@@ -348,8 +307,8 @@ helm upgrade --install promtail grafana/promtail \
   --wait --timeout=3m
 green "Promtail ready"
 
-# ─── Step 14: config-service ──────────────────────────────────────────────────
-header "Step 14: config-service app"
+# ─── Step 13: config-service ──────────────────────────────────────────────────
+header "Step 13: config-service app"
 helm upgrade --install config-service deployments/helm/config-service \
   --namespace "${NAMESPACE}" \
   --set image.repository=config-service \
@@ -361,6 +320,43 @@ helm upgrade --install config-service deployments/helm/config-service \
   --set serviceMonitor.enabled=true \
   --wait --timeout=3m
 green "config-service deployed"
+
+# ─── Step 14: Prometheus + Grafana ────────────────────────────────────────────
+# Installed AFTER the app so ServiceMonitor resources exist before the operator
+# scrapes for them — avoids a reconcile delay on first deploy.
+header "Step 14: Prometheus + Grafana  (chart ${PROM_STACK_CHART_VERSION})"
+
+# Pre-pull images that are reliably hosted on Docker Hub.
+# prometheus-operator images only exist at quay.io — let helm pull those
+# directly (minikube's Docker daemon has full network access via macOS and
+# trusts quay.io without issue).
+yellow "Pre-pulling Prometheus + Grafana images into Minikube..."
+docker pull --platform linux/amd64 prom/prometheus:v2.53.0
+docker pull --platform linux/amd64 grafana/grafana:10.4.3
+
+helm upgrade --install prometheus prometheus/kube-prometheus-stack \
+  --version "${PROM_STACK_CHART_VERSION}" \
+  --namespace "${NAMESPACE}" \
+  --set grafana.adminPassword=admin \
+  --set grafana.persistence.enabled=false \
+  --set alertmanager.enabled=false \
+  --set kubeStateMetrics.enabled=false \
+  --set nodeExporter.enabled=false \
+  --set prometheusOperator.admissionWebhooks.enabled=false \
+  --set prometheusOperator.admissionWebhooks.patch.enabled=false \
+  --set prometheusOperator.tls.enabled=false \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
+  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+  --set "prometheus.prometheusSpec.image.registry=docker.io" \
+  --set "prometheus.prometheusSpec.image.repository=prom/prometheus" \
+  --set "prometheus.prometheusSpec.image.tag=v2.53.0" \
+  --set "prometheus.prometheusSpec.image.pullPolicy=IfNotPresent" \
+  --set "grafana.image.repository=grafana/grafana" \
+  --set "grafana.image.tag=10.4.3" \
+  --set "grafana.image.pullPolicy=IfNotPresent" \
+  --values deployments/manifests/grafana-provisioning.yaml \
+  --wait --timeout=5m
+green "Prometheus + Grafana ready  (admin / admin)"
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 header "All pods"

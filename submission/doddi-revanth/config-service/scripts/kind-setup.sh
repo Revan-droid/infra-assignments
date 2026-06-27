@@ -36,10 +36,12 @@ POSTGRES_CHART_VERSION="15.5.0"
 POSTGRES_IMAGE="bitnamilegacy/postgresql:16.3.0-debian-12-r10"
 
 PROM_STACK_CHART_VERSION="60.3.0"
-# Use docker.io mirrors — quay.io is blocked by corporate TLS proxy
+# prom/prometheus and grafana are on Docker Hub.
+# prometheus-operator images are quay.io only (Docker Hub mirror is outdated at v0.37.0).
+# crane on Mac host can pull quay.io fine (system CA handles TLS).
 PROM_IMAGE="docker.io/prom/prometheus:v2.53.0"
-PROM_OPERATOR_IMAGE="docker.io/prometheusoperator/prometheus-operator:v0.74.0"
-PROM_CONFIG_RELOADER_IMAGE="docker.io/prometheusoperator/prometheus-config-reloader:v0.74.0"
+PROM_OPERATOR_IMAGE="quay.io/prometheus-operator/prometheus-operator:v0.74.0"
+PROM_CONFIG_RELOADER_IMAGE="quay.io/prometheus-operator/prometheus-config-reloader:v0.74.0"
 GRAFANA_IMAGE="docker.io/grafana/grafana:10.4.3"
 JAEGER_CHART_VERSION="3.3.1"
 JAEGER_IMAGE="docker.io/jaegertracing/all-in-one:1.53.0"
@@ -278,42 +280,8 @@ helm install kafka bitnami/kafka \
   --wait --timeout=5m
 green "Kafka ready (topic: config-events)"
 
-# ─── Step 7: Prometheus + Grafana ─────────────────────────────────────────────
-header "Step 7: Prometheus + Grafana  (chart ${PROM_STACK_CHART_VERSION})"
-helm upgrade --install prometheus prometheus/kube-prometheus-stack \
-  --version "${PROM_STACK_CHART_VERSION}" \
-  --namespace "${NAMESPACE}" \
-  --set grafana.adminPassword=admin \
-  --set grafana.persistence.enabled=false \
-  --set alertmanager.enabled=false \
-  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
-  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
-  --set kubeStateMetrics.enabled=false \
-  --set nodeExporter.enabled=false \
-  --set prometheusOperator.admissionWebhooks.enabled=false \
-  --set prometheusOperator.admissionWebhooks.patch.enabled=false \
-  --set prometheusOperator.tls.enabled=false \
-  --set "prometheus.prometheusSpec.image.registry=docker.io" \
-  --set "prometheus.prometheusSpec.image.repository=prom/prometheus" \
-  --set "prometheus.prometheusSpec.image.tag=v2.53.0" \
-  --set "prometheus.prometheusSpec.image.pullPolicy=IfNotPresent" \
-  --set "prometheusOperator.image.registry=docker.io" \
-  --set "prometheusOperator.image.repository=prometheusoperator/prometheus-operator" \
-  --set "prometheusOperator.image.tag=v0.74.0" \
-  --set "prometheusOperator.image.pullPolicy=IfNotPresent" \
-  --set "prometheusOperator.prometheusConfigReloader.image.registry=docker.io" \
-  --set "prometheusOperator.prometheusConfigReloader.image.repository=prometheusoperator/prometheus-config-reloader" \
-  --set "prometheusOperator.prometheusConfigReloader.image.tag=v0.74.0" \
-  --set "prometheusOperator.prometheusConfigReloader.image.pullPolicy=IfNotPresent" \
-  --set "grafana.image.repository=grafana/grafana" \
-  --set "grafana.image.tag=10.4.3" \
-  --set "grafana.image.pullPolicy=IfNotPresent" \
-  --values deployments/manifests/grafana-provisioning.yaml \
-  --wait --timeout=5m
-green "Prometheus + Grafana ready  (admin / admin)"
-
-# ─── Step 8: Jaeger ───────────────────────────────────────────────────────────
-header "Step 8: Jaeger  (chart ${JAEGER_CHART_VERSION})"
+# ─── Step 7: Jaeger ───────────────────────────────────────────────────────────
+header "Step 7: Jaeger  (chart ${JAEGER_CHART_VERSION})"
 helm upgrade --install jaeger jaeger/jaeger \
   --version "${JAEGER_CHART_VERSION}" \
   --namespace "${NAMESPACE}" \
@@ -328,8 +296,8 @@ helm upgrade --install jaeger jaeger/jaeger \
   --wait --timeout=3m
 green "Jaeger ready  → http://localhost:16686 after port-forward"
 
-# ─── Step 9: OpenTelemetry Collector ──────────────────────────────────────────
-header "Step 9: OpenTelemetry Collector  (chart ${OTEL_CHART_VERSION})"
+# ─── Step 8: OpenTelemetry Collector ──────────────────────────────────────────
+header "Step 8: OpenTelemetry Collector  (chart ${OTEL_CHART_VERSION})"
 helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   --version "${OTEL_CHART_VERSION}" \
   --namespace "${NAMESPACE}" \
@@ -346,8 +314,8 @@ helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
   --wait --timeout=3m
 green "OTel Collector ready"
 
-# ─── Step 10: Loki ────────────────────────────────────────────────────────────
-header "Step 10: Loki  (chart ${LOKI_CHART_VERSION})"
+# ─── Step 9: Loki ────────────────────────────────────────────────────────────
+header "Step 9: Loki  (chart ${LOKI_CHART_VERSION})"
 helm upgrade --install loki grafana/loki \
   --version "${LOKI_CHART_VERSION}" \
   --namespace "${NAMESPACE}" \
@@ -365,8 +333,8 @@ helm upgrade --install loki grafana/loki \
   --wait --timeout=3m
 green "Loki ready"
 
-# ─── Step 11: Promtail ────────────────────────────────────────────────────────
-header "Step 11: Promtail  (chart ${PROMTAIL_CHART_VERSION})"
+# ─── Step 10: Promtail ────────────────────────────────────────────────────────
+header "Step 10: Promtail  (chart ${PROMTAIL_CHART_VERSION})"
 helm upgrade --install promtail grafana/promtail \
   --version "${PROMTAIL_CHART_VERSION}" \
   --namespace "${NAMESPACE}" \
@@ -378,8 +346,8 @@ helm upgrade --install promtail grafana/promtail \
   --wait --timeout=3m
 green "Promtail ready"
 
-# ─── Step 12: config-service ──────────────────────────────────────────────────
-header "Step 12: config-service app"
+# ─── Step 11: config-service ──────────────────────────────────────────────────
+header "Step 11: config-service app"
 helm upgrade --install config-service deployments/helm/config-service \
   --namespace "${NAMESPACE}" \
   --set image.repository=config-service \
@@ -391,6 +359,42 @@ helm upgrade --install config-service deployments/helm/config-service \
   --set serviceMonitor.enabled=true \
   --wait --timeout=3m
 green "config-service deployed"
+
+# ─── Step 12: Prometheus + Grafana ────────────────────────────────────────────
+# Installed AFTER the app so ServiceMonitor resources exist before the operator
+# scrapes for them — avoids a reconcile delay on first deploy.
+header "Step 12: Prometheus + Grafana  (chart ${PROM_STACK_CHART_VERSION})"
+helm upgrade --install prometheus prometheus/kube-prometheus-stack \
+  --version "${PROM_STACK_CHART_VERSION}" \
+  --namespace "${NAMESPACE}" \
+  --set grafana.adminPassword=admin \
+  --set grafana.persistence.enabled=false \
+  --set alertmanager.enabled=false \
+  --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
+  --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false \
+  --set kubeStateMetrics.enabled=false \
+  --set nodeExporter.enabled=false \
+  --set prometheusOperator.admissionWebhooks.enabled=false \
+  --set prometheusOperator.admissionWebhooks.patch.enabled=false \
+  --set prometheusOperator.tls.enabled=false \
+  --set "prometheus.prometheusSpec.image.registry=docker.io" \
+  --set "prometheus.prometheusSpec.image.repository=prom/prometheus" \
+  --set "prometheus.prometheusSpec.image.tag=v2.53.0" \
+  --set "prometheus.prometheusSpec.image.pullPolicy=IfNotPresent" \
+  --set "prometheusOperator.image.registry=quay.io" \
+  --set "prometheusOperator.image.repository=prometheus-operator/prometheus-operator" \
+  --set "prometheusOperator.image.tag=v0.74.0" \
+  --set "prometheusOperator.image.pullPolicy=IfNotPresent" \
+  --set "prometheusOperator.prometheusConfigReloader.image.registry=quay.io" \
+  --set "prometheusOperator.prometheusConfigReloader.image.repository=prometheus-operator/prometheus-config-reloader" \
+  --set "prometheusOperator.prometheusConfigReloader.image.tag=v0.74.0" \
+  --set "prometheusOperator.prometheusConfigReloader.image.pullPolicy=IfNotPresent" \
+  --set "grafana.image.repository=grafana/grafana" \
+  --set "grafana.image.tag=10.4.3" \
+  --set "grafana.image.pullPolicy=IfNotPresent" \
+  --values deployments/manifests/grafana-provisioning.yaml \
+  --wait --timeout=5m
+green "Prometheus + Grafana ready  (admin / admin)"
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 header "All pods"
