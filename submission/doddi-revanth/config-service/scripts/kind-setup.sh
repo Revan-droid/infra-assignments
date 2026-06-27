@@ -292,7 +292,7 @@ helm upgrade --install config-service deployments/helm/config-service \
   --set config.enableKafka=true \
   --set config.logLevel=debug \
   --set "config.otlpEndpoint=otel-collector-opentelemetry-collector.${NAMESPACE}.svc.cluster.local:4317" \
-  --set serviceMonitor.enabled=true \
+  --set serviceMonitor.enabled=false \
   --wait --timeout=3m
 green "config-service deployed"
 
@@ -402,6 +402,15 @@ helm upgrade --install prometheus prometheus/kube-prometheus-stack \
   --values deployments/manifests/grafana-provisioning.yaml \
   --wait --timeout=5m
 green "Prometheus + Grafana ready  (admin / admin)"
+
+# Enable ServiceMonitor now that the CRD exists (installed by kube-prometheus-stack above)
+yellow "Enabling ServiceMonitor for config-service..."
+helm upgrade config-service deployments/helm/config-service \
+  --namespace "${NAMESPACE}" \
+  --reuse-values \
+  --set serviceMonitor.enabled=true \
+  --wait --timeout=2m
+green "ServiceMonitor enabled — Prometheus will now scrape config-service"
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 header "All pods"
