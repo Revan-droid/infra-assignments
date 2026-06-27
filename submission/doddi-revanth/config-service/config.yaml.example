@@ -1,0 +1,10 @@
+# config.yaml — optional file-based config (env vars override everything)
+# Copy to /etc/config-service/config.yaml or place in working directory
+
+PORT: "8080"
+LOG_LEVEL: "info"
+ENABLE_KAFKA: false
+ENABLE_METRICS: true
+OTLP_ENDPOINT: ""
+
+# DATABASE_URL and KAFKA_BROKERS should come from environment/secrets — not this file

@@ -1,0 +1,14 @@
+# grafana-provisioning.yaml — Grafana datasources for Kind deployment
+# Used when grafana is part of kube-prometheus-stack
+grafana:
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki.config-service.svc.cluster.local:3100
+      jsonData:
+        maxLines: 1000
+    - name: Jaeger
+      type: jaeger
+      access: proxy
+      url: http://jaeger-allInOne.config-service.svc.cluster.local:16686

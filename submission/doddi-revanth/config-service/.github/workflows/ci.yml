@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'submission/doddi-revanth/config-service/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'submission/doddi-revanth/config-service/**'
+
+defaults:
+  run:
+    working-directory: submission/doddi-revanth/config-service
+
+jobs:
+  # ─── Go Quality ─────────────────────────────────────────────────────────────
+  go-quality:
+    name: Go Quality (vet + lint + fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+          cache-dependency-path: submission/doddi-revanth/config-service/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: submission/doddi-revanth/config-service
+          args: --timeout=5m
+
+  # ─── Unit Tests ──────────────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+          cache-dependency-path: submission/doddi-revanth/config-service/go.sum
+
+      - name: Run tests
+        run: go test ./... -race -count=1 -timeout 60s -coverprofile=coverage.out
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: submission/doddi-revanth/config-service/coverage.out
+          flags: unittests
+
+  # ─── Docker Build ────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: submission/doddi-revanth/config-service
+          push: false
+          tags: config-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─── Helm Lint ───────────────────────────────────────────────────────────────
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.15.0'
+
+      - name: Helm lint
+        run: helm lint deployments/helm/config-service
+
+      - name: Helm template (dry-run)
+        run: |
+          helm template config-service deployments/helm/config-service \
+            --namespace config-service \
+            --debug
+
+  # ─── Terraform ───────────────────────────────────────────────────────────────
+  terraform:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.8.5'
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Terraform init (local module)
+        run: terraform -chdir=terraform/local init -backend=false
+
+      - name: Terraform validate
+        run: terraform -chdir=terraform/local validate
+
+  # ─── YAML Lint ───────────────────────────────────────────────────────────────
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: yamllint
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: submission/doddi-revanth/config-service
+          config_file: .yamllint.yml

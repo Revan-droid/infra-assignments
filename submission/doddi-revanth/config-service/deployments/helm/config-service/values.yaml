@@ -1,0 +1,158 @@
+# Default values for config-service Helm chart.
+# Override via --set or -f my-values.yaml
+
+replicaCount: 2
+
+image:
+  repository: config-service
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# ─── Application Config ───────────────────────────────────────────────────────
+config:
+  port: "8080"
+  logLevel: "info"
+  enableKafka: "false"
+  enableMetrics: "true"
+  otlpEndpoint: ""
+
+# ─── Database Secret ──────────────────────────────────────────────────────────
+# DATABASE_URL is injected from Kubernetes Secret (managed by Terraform)
+database:
+  secretName: "config-service-db"
+  secretKey: "DATABASE_URL"
+
+# ─── Kafka Secret ─────────────────────────────────────────────────────────────
+kafka:
+  secretName: "config-service-kafka"
+  brokersKey: "KAFKA_BROKERS"
+
+# ─── Service ──────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  annotations: {}
+
+# ─── Ingress ──────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: config-service.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ─── Resources ────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# ─── Probes ───────────────────────────────────────────────────────────────────
+livenessProbe:
+  httpGet:
+    path: /live
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  failureThreshold: 3
+  timeoutSeconds: 5
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 5
+
+startupProbe:
+  httpGet:
+    path: /ping
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 12
+
+# ─── Autoscaling ──────────────────────────────────────────────────────────────
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ─── Pod Disruption Budget ────────────────────────────────────────────────────
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# ─── Network Policy ───────────────────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+
+# ─── Security Context ─────────────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL
+
+# ─── Tolerations / Affinity ───────────────────────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - config-service
+          topologyKey: kubernetes.io/hostname
+
+# ─── Prometheus ServiceMonitor ────────────────────────────────────────────────
+serviceMonitor:
+  enabled: false   # set true only when kube-prometheus-stack CRDs are installed
+  interval: 30s
+  path: /metrics
+  labels:
+    release: prometheus
+
+# ─── Pod Annotations ──────────────────────────────────────────────────────────
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"

@@ -1,0 +1,190 @@
+version: "3.9"
+
+services:
+  # ─── Application ─────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: config-service:local
+    container_name: config-service
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: "debug"
+      DATABASE_URL: "postgres://configuser:configpass@postgres:5432/configdb?sslmode=disable"
+      KAFKA_BROKERS: "kafka:9092"
+      ENABLE_KAFKA: "true"
+      ENABLE_METRICS: "true"
+      OTLP_ENDPOINT: "otel-collector:4317"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - platform
+
+  # ─── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: config-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: configuser
+      POSTGRES_PASSWORD: configpass
+      POSTGRES_DB: configdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U configuser -d configdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ─── Zookeeper (required by Kafka) ───────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: config-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ─── Kafka ────────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: config-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      - zookeeper
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ─── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: config-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deployments/manifests/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ─── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: config-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployments/manifests/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./deployments/manifests/grafana-dashboard.json:/var/lib/grafana/dashboards/config-service.json:ro
+    depends_on:
+      - prometheus
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ─── OpenTelemetry Collector ──────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    container_name: config-otel
+    ports:
+      - "4317:4317"  # gRPC
+      - "4318:4318"  # HTTP
+      - "8888:8888"  # Prometheus metrics
+    volumes:
+      - ./deployments/manifests/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    command: ["--config=/etc/otel-collector.yaml"]
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ─── Jaeger ───────────────────────────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: config-jaeger
+    ports:
+      - "16686:16686" # UI
+      - "14268:14268" # HTTP collector
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ─── Loki (log aggregation backend) ──────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: config-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ─── Promtail (log shipper — scrapes container logs → Loki) ──────────────────
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: config-promtail
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./deployments/manifests/promtail-config.yaml:/etc/promtail/config.yaml:ro
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    networks:
+      - platform
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+
+networks:
+  platform:
+    driver: bridge

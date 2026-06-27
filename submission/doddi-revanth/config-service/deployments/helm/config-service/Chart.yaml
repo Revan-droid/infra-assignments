@@ -1,0 +1,12 @@
+apiVersion: v2
+name: config-service
+description: Production-grade Configuration Service with PostgreSQL, Kafka, and observability
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - config
+  - kubernetes
+  - platform
+maintainers:
+  - name: doddi-revanth

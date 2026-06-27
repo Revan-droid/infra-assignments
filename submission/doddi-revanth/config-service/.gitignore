@@ -1,0 +1,33 @@
+# Binaries
+bin/
+*.exe
+
+# Test artifacts
+coverage.out
+coverage.html
+
+# Terraform state (never commit)
+terraform/.terraform/
+terraform/**/.terraform/
+terraform/**/.terraform.lock.hcl
+terraform/local/.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl
+
+# Secrets / config overrides
+config.yaml
+*.env
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
