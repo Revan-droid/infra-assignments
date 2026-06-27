@@ -57,29 +57,29 @@ func (r *Postgres) Upsert(ctx context.Context, cfg *models.Config) error {
 
 	now := time.Now().UTC()
 
+	// RETURNING created_at ensures the response always reflects the original
+	// creation time, not the time of the update request.
 	const q = `
 		INSERT INTO configs (id, host, port, app_name, log_level, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT created_at FROM configs WHERE id = $1), $6), $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (id) DO UPDATE SET
 			host       = EXCLUDED.host,
 			port       = EXCLUDED.port,
 			app_name   = EXCLUDED.app_name,
 			log_level  = EXCLUDED.log_level,
-			updated_at = EXCLUDED.updated_at`
+			updated_at = EXCLUDED.updated_at
+		RETURNING created_at`
 
-	_, err := r.pool.Exec(ctx, q,
+	err := r.pool.QueryRow(ctx, q,
 		cfg.ID, cfg.Host, cfg.Port,
 		cfg.AppName, cfg.LogLevel,
 		now, now,
-	)
+	).Scan(&cfg.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("upsert config %q: %w", cfg.ID, err)
 	}
 
 	cfg.UpdatedAt = now
-	if cfg.CreatedAt.IsZero() {
-		cfg.CreatedAt = now
-	}
 
 	r.metrics.IncConfigUpserts()
 	return nil
