@@ -17,10 +17,10 @@ check() {
   local actual="$3"
   if [[ "$actual" == *"$expected"* ]]; then
     green "$name"
-    ((PASS++))
+    ((PASS++)) || true
   else
     red "$name — expected '$expected', got '$actual'"
-    ((FAIL++))
+    ((FAIL++)) || true
   fi
 }
 
